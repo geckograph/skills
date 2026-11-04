@@ -2,7 +2,7 @@
   "name": "geckograph",
   "displayName": "GeckoGraph",
   "description": "Keeps a customer's GeckoGraph graph in sync with their code. First use edits AGENTS.md or CLAUDE.md. The agent writes geckograph.yml (method, path, and fields). Scan does not author that file. Before the commit the agent rereads the branch diff against geckograph.yml, then commits and opens the pull request. CI runs geckograph deployed after the deploy.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": {
     "name": "GeckoGraph",
     "url": "https://app.geckograph.com"

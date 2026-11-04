@@ -34,7 +34,9 @@ Windows:
 irm https://app.geckograph.com/cli/install.ps1 | iex
 ```
 
-The Windows script checks the download against the published `SHA256SUMS`. The release is not signed. Then run `geckograph login`.
+The Windows script checks the download against the published `SHA256SUMS`. The release is not signed.
+
+Then run `geckograph login --no-browser` in the background. It prints a sign-in URL whether or not a browser opens: give that URL to the person to open on any device, and wait until it prints `Logged in to GeckoGraph.` (the link expires in 10 minutes). Never sign in for them.
 
 ## First run
 
@@ -44,7 +46,7 @@ The Windows script checks the download against the published `SHA256SUMS`. The r
 
 ## geckograph.yml
 
-One entry per procedure the client calls:
+One entry per procedure the client calls. The file is the complete list: add, change or delete lines; never rewrite it with only the lines you touched. Relearn retires each action it built from a line that left the file (see Remove a feature).
 
 ```yaml
 version: 1
@@ -102,7 +104,7 @@ Keep `geckograph dev --local <host:port>` running in the background, pointed at 
 ### Remove a feature
 
 1. Delete the procedure and its `source: code` line.
-2. Run `geckograph relearn`. It retires the action when this personal environment created it (`Removed action: …`), and hides a feature left with no active action (`Hidden feature: …`), which the agent no longer offers. A file with no line left retires nothing.
+2. Run `geckograph relearn`. It retires the action when this personal environment created it (`Removed action: …`), and hides a feature left with no active action (`Hidden feature: …`), which the agent no longer offers. A file with no line left retires nothing. Relearn does this for every line missing from the file, deleted on purpose or not: when it prints `Removed action` for a line you did not mean to remove, put the line back and run `geckograph relearn` again, and tell the person.
 3. An action that came from Live stays. When the file holds imported lines, relearn lists it as `in Live but not in geckograph.yml` and prints a dashboard link. Tell the person to open it, select the tool, and choose Suppress.
 4. Then follow Add, steps 4 to 6.
 
