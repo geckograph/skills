@@ -14,7 +14,7 @@ GeckoGraph holds a graph of the app's features and the actions (tools) that call
 - Never read `~/.config/geckograph/credentials.json` or any other credential or token file.
 - Never call the GeckoGraph API directly, with `curl` or anything else.
 - Never inspect the CLI binary, with `strings` or anything else.
-- If a command is missing or fails, report it. Do not work around it.
+- If a command is missing, run `geckograph update` and try again. If it is still missing, or a command fails, report it. Do not work around it.
 - Never pass `--yes` to `geckograph init` or `geckograph contract pull` unless the person asked for the import.
 - Never regenerate `geckograph.yml`. Edit your own `source: code` lines in it by hand.
 
@@ -35,6 +35,8 @@ irm https://app.geckograph.com/cli/install.ps1 | iex
 ```
 
 The Windows script checks the download against the published `SHA256SUMS`. The release is not signed.
+
+When a command prints `A newer GeckoGraph CLI is available`, run `geckograph update`, then run the command again.
 
 Then run `geckograph login --no-browser` in the background. It prints a sign-in URL whether or not a browser opens: give that URL to the person to open on any device, and wait until it prints `Logged in to GeckoGraph.` (the link expires in 10 minutes). Never sign in for them.
 
