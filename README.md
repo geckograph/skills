@@ -1,6 +1,6 @@
 # GeckoGraph skill
 
-A skill other people install in their own repo. On first use it edits `AGENTS.md` or `CLAUDE.md`. A feature change is written into `geckograph.yml` by the agent (method, path, and fields). Scan does not author that file. With `geckograph dev` running, the agent runs `geckograph relearn`. Before the commit it rereads the branch diff and confirms every route the branch created, changed or removed is reflected in `geckograph.yml`. It then commits the code and the `geckograph.yml` diff and opens the pull request. CI runs `geckograph deployed` after the deploy.
+A skill other people install in their own repo. On first use it edits `AGENTS.md` or `CLAUDE.md`. A feature change is written into `geckograph.yml` by the agent (method, path, and fields). Scan does not author that file. With `geckograph dev` running, the agent runs `geckograph relearn`. Before the commit it rereads the branch diff and confirms every route the branch created, changed or removed is reflected in `geckograph.yml`. It then commits the code and the `geckograph.yml` diff and opens the pull request. A person moves Staging and Live in the GeckoGraph dashboard.
 
 ```bash
 npx skills add geckograph/skills
