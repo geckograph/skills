@@ -7,10 +7,10 @@ description: Sets a repo up for GeckoGraph, keeps its GeckoGraph graph in sync w
 
 ## How GeckoGraph works
 
-- GeckoGraph holds a graph of this app's features and the actions (tools) an AI agent calls on the app's API. The app's users reach it through chat, the website widget and MCP.
+- GeckoGraph holds a graph of this app's features and the actions (tools) an AI agent calls on the app's API. The app's users reach it through chat, the website widget and MCP. An app that serves its end users through MCP builds its part of their sign-in (the session bridge) from the `geckograph-mcp-auth` skill: install it as this one installs outside a repo, `npx skills add geckograph/skills`, which adds it beside this one, and check it with `geckograph mcp auth check --app <slug> --env <environment>`.
 - The graph comes from GeckoGraph's scan of the running app, which the person runs in the GeckoGraph dashboard. You never build it, and never write lines for what it already holds.
 - `geckograph.yml` in this repo lists the app's routes. `geckograph init` writes the ones GeckoGraph already knows as `source: dashboard` lines. After that, a change that adds, changes or removes a route edits its line in the same commit. That is the only time you write a line.
-- Shared environments (production, staging, and so on) change only when a person moves them in the GeckoGraph dashboard; no command, CI step or API key moves them. Your personal environment is yours: `geckograph dev` and `geckograph relearn` change only it.
+- Shared environments (production, staging, and so on) change only when a person acts in the GeckoGraph dashboard; no command, CI step or API key changes them. Each is Following, Approval or Held: `environments.md` beside this skill says what each means and where the person clicks. Your personal environment is yours: `geckograph dev` and `geckograph relearn` change only it.
 
 **With no specific change to make, setup is the whole task.** Run Setup below, then ask the person what they want to change. Do not explore, scan or map the app's API.
 
@@ -91,17 +91,17 @@ Keep `geckograph dev --local <host:port>` running in the background, pointed at 
 3. With `geckograph dev` running, run `geckograph relearn`.
 4. Reread the branch diff (see Before the commit).
 5. Ask the person. Commit the code and the `geckograph.yml` diff only after they agree.
-6. Do not try to move Staging or Live. Open the pull request: that is the last step here.
+6. Do not try to change Staging or Live. Open the pull request: that is the last step here.
 
 ### Update a feature
 
 - Change fields, path, or method by editing the line in place. To rename, edit `name:`.
 - Editing a line's fields (added, removed, required or optional), binding or `name:` updates its action on your personal environment: relearn prints `Updated action: …`. A line that did not change is left alone.
 - A new path with the same `name:` moves the action this personal environment created. A new path with another name is a new route: relearn creates its action and retires the old one if this environment created it.
-- To change an endpoint Live already serves, leave its `source: dashboard` line alone. Add a code line for that route matching what it does now, run `geckograph relearn` (it records the line and changes nothing), then change the code and that line together. Staging and Live keep what they serve until a person moves them in the dashboard.
+- To change an endpoint Live already serves, leave its `source: dashboard` line alone. Add a code line for that route matching what it does now, run `geckograph relearn` (it records the line and changes nothing), then change the code and that line together. Staging and Live keep what they use until their state lets a new version in (`environments.md` beside this skill).
 - Relearn never rewrites a login action, or an action it did not build whose request is not plain JSON: it prints `Not updated: <reason>`. Tell the person.
 - A new method on the same path is a possible rename: relearn keeps the old action, creates none for the new line, and prints `Possible rename`. Tell the person.
-- Then follow Add, steps 3 to 6. Staging and Live keep what they serve until a person moves them in the dashboard.
+- Then follow Add, steps 3 to 6. Staging and Live keep what they use until their state lets a new version in (`environments.md` beside this skill).
 
 ### Remove a feature
 
@@ -128,7 +128,7 @@ Reread the branch diff (`git diff <base>...HEAD` plus uncommitted changes) and c
 
 ## After the pull request
 
-Stop at the pull request. There is no deploy command and no CI step: a person moves Staging and Live in the GeckoGraph dashboard.
+Stop at the pull request. There is no deploy command and no CI step: a person changes what Staging and Live use in the GeckoGraph dashboard.
 
 ## Do not
 
@@ -137,4 +137,4 @@ Stop at the pull request. There is no deploy command and no CI step: a person mo
 - Never read credential files or call the GeckoGraph API directly.
 - Never put secrets, tokens, cookies, or header values in `geckograph.yml`.
 - Never write a catch-all `/api/trpc` line.
-- Never try to move Staging or Live: a person does that in the dashboard. The pull request is the last step here.
+- Never try to change Staging or Live: a person does that in the dashboard. The pull request is the last step here.
