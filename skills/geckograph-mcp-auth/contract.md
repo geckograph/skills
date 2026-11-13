@@ -1,6 +1,6 @@
 # The session bridge contract
 
-`{GeckoGraph}` below is `https://app.geckograph.com`. `{app}` is the app's slug in GeckoGraph. `externalUserId` is the app's own id for a user: the same opaque string the app already sends GeckoGraph (widget sessions, connect sessions), unique in the app.
+`{GeckoGraph}` below is `https://app.geckograph.com`. `{app}` is the app's slug in GeckoGraph. `externalUserId` is the app's own id for a user of the kind the graph signs in as (SKILL.md, step 1): the same opaque string the app already sends GeckoGraph (widget sessions, connect sessions), unique in the app. In an app with several kinds of users, "user" below always means that kind.
 
 ## 0. What the app needs from GeckoGraph
 
@@ -127,22 +127,76 @@ Content-Type: application/json
 - A new link is a new row. Never update or delete another link's row here, even one of the same user.
 - GeckoGraph refuses the redeem unless the `externalUserId` is the user the link request was made for, the key is the app's own, and the request is live and unused. On any answer that is not `200`, store nothing, and answer the frontend with an error (any non-2xx, with no detail) so the panel says the connection was not accepted.
 - The call is server to server: no browser calls it, and a request with an `Origin` header is refused.
+- With derived secrets (option B, section 2b), the body also carries the `linkId` and `secret` the app made, and the app stores nothing.
 
-## 2. The link table
+## 2. The link store
+
+The link store is the app's own data, so it is designed like the app's own tables, not copied from here. What it must hold, one record per link (never one per user):
+
+| Field | Holds |
+| --- | --- |
+| link id | GeckoGraph's `linkId`, a UUID, unique. The app may also give the record its own key in its usual style. |
+| user | the app's user the link belongs to (the **session's** user at redeem), a user of the kind the graph signs in as, in that user record's own key type |
+| secret hash | lowercase hex SHA-256 of the secret, 64 characters. Never the secret. |
+| created | when it was made |
+
+Design it the way the app already stores comparable records:
+- **Read the app's existing schema first** (its migrations, models or DDL scripts, and the tables around users and sessions) and follow what most of its tables do: table and column naming and prefixes, how primary keys are made (an auto-numbered id, a UUID, a natural key), the date and time types, whether it uses foreign keys, and whether a record is deleted or marked by a status column.
+- If the app ends records with a status column instead of deleting them, a revoked link is marked that way, and `sessionUrl` treats any status other than live as `no_link`.
+- Look a link up by link id and user; index it for that.
+- No uniqueness on the user alone: a user may hold several links (their own, a check's).
+- Deleting a user ends their links (a cascade, or the app's usual cleanup). Deactivating a user makes `sessionUrl` refuse them (section 3).
+- Use the app's own migration tool or SQL process. When it attaches SQL to a ticket rather than committing it, write the script for the person and say where it goes.
+
+A sketch only, for an app whose tables are lowercase, keyed by UUID and deleted outright:
 
 ```sql
 CREATE TABLE geckograph_bridge_links (
-  link_id        text PRIMARY KEY,                 -- GeckoGraph's linkId, a UUID
-  user_id        <the app's user id type> NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  secret_sha256  char(64) NOT NULL,                -- lowercase hex
+  link_id        uuid PRIMARY KEY,
+  user_id        <the app's user key type> NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  secret_sha256  char(64) NOT NULL,
   created_at     timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX geckograph_bridge_links_user ON geckograph_bridge_links (user_id);
 ```
 
-- No unique constraint on `user_id`: a user may hold several links (their own, a check's).
-- Deleting a user deletes their links. Deactivating a user makes `sessionUrl` refuse them (below).
-- Use the app's own migration tool and naming.
+This is option A, the default. An app that can't add a table uses option B (2b) instead.
+
+## 2b. Option B: derived secrets (no table)
+
+The app makes each link's secret itself, from a key only it holds, so it can check a secret later without storing anything.
+
+```
+secret = base64url( HMAC-SHA256( bridgeKey, "geckograph-bridge-link
+" + linkId + "
+" + externalUserId ) )
+```
+
+- `bridgeKey` is 32 random bytes in the app's server config (for example `GECKOGRAPH_BRIDGE_KEY`), set per environment, never in the repo or the browser. It is the app's own key; GeckoGraph never sees it.
+- `base64url` is without padding (43 characters for 32 bytes). `linkId` is a lowercase UUID; GeckoGraph refuses any other at redeem and never changes it, so the app derives from the exact text it sends.
+
+**The redeem (1c).** The backend makes a new `linkId` (a random UUID), computes the secret for the **session's** user, and sends both:
+
+```http
+POST {GeckoGraph}/api/mcp/v1/apps/{app}/bridge-links/redeem
+Authorization: Bearer agfy_…
+Content-Type: application/json
+
+{ "request": "<the link request>", "externalUserId": "<the session's user's id>", "linkId": "<new uuid>", "secret": "<derived>" }
+```
+
+GeckoGraph answers `200 { "linkId", "secret" }` with the values the app sent, and keeps the secret as it keeps its own. It refuses with `400 {"error":"invalid_request"}` when only one of `linkId` and `secret` is sent, the `linkId` is not a lowercase UUID or is already in use, or the secret is not base64url of at least 32 bytes. Any other refusal is as in 1c. Store nothing either way.
+
+**`POST {sessionUrl}` (section 3).** After the JWT check, refuse a `linkId` that is not a lowercase UUID (`404 {"error":"no_link"}`; this also keeps the HMAC input unambiguous), then compute the secret from the body's `linkId` and `externalUserId` and compare it with the body's `secret` in constant time. Answer `200` only when they match and the user exists and is active; then start a new session as in section 3. Every other case answers `404 {"error":"no_link"}`, with the same body.
+
+**`POST {revokeUrl}` (section 3).** After the JWT check, answer `204`. There is nothing to delete: GeckoGraph deletes its copy of the secret whether or not the call succeeds, and never presents it again.
+
+What option B gives up, so tell the person you work for:
+- The app can't end one user's link on its own. Ending links is GeckoGraph's side: the user disconnecting, a new link replacing the old, an auth check ending, or an admin disconnecting the user on the dashboard.
+- The app's own way to end links is to change `bridgeKey`, which ends every user's link at once; each user turns the bridge on again in the panel.
+- Deactivating a user still works: `sessionUrl` refuses an inactive user whatever the secret.
+
+The auth check shows `no_link_after_revoke` as not run (–) for a derived link: with no record, the app can't refuse the link after a revoke, so the check doesn't ask.
 
 ## 3. The two endpoints GeckoGraph calls
 
@@ -158,8 +212,8 @@ Content-Type: application/json
 { "externalUserId": "user_123", "linkId": "0b6f6f0e-3c1a-4c55-9a43-2f7d8e1b9c10", "secret": "3vJ9…" }
 ```
 
-Find the link row by `linkId`. Answer `200` only when all of these hold:
-- the row exists;
+Find the link record by `linkId`. Answer `200` only when all of these hold:
+- the record exists and is live (not marked revoked, if the app ends records by status);
 - its user is the user `externalUserId` names;
 - `sha256(secret)` equals `secret_sha256` (compare in constant time);
 - the user is active (not disabled, deleted, locked or otherwise unable to sign in to the app now).
@@ -197,7 +251,7 @@ Content-Type: application/json
 | Case | Answer |
 | --- | --- |
 | a JWT check fails (signature, `typ`, `alg`, `iss`, `aud`, `exp`, `iat`, body hash, replayed `jti`, missing header) | `401` |
-| no row for `linkId` | `404 {"error":"no_link"}` |
+| no record for `linkId`, or the record is not live (marked revoked) | `404 {"error":"no_link"}` |
 | the row's user is not `externalUserId`'s user, or no such user | `404 {"error":"no_link"}` |
 | the secret's hash doesn't match | `404 {"error":"no_link"}` |
 | the user is inactive | `404 {"error":"no_link"}` |
@@ -231,12 +285,13 @@ DELETE FROM geckograph_bridge_links WHERE link_id = $1 AND user_id = $2
 | --- | --- |
 | a JWT check fails | `401` |
 | `event` is not `link.revoked`, or the body is not the JSON above | `400` |
-| the link was deleted, or was already gone | `204` |
+| the link was deleted or marked revoked, or was already gone | `204` |
 
-- Delete only the named link. A user's other links stay.
+- End only the named link: delete its record, or mark it revoked if the app ends records by status. A user's other links stay.
 - GeckoGraph calls it when the user disconnects, when a new link of theirs replaces the old one, and when an auth check ends. It deletes its side of the link whether or not this call succeeds.
-- The app may end a link on its own by deleting the row; the next `sessionUrl` call answers `no_link`.
-- Don't end the user's open app sessions here: a revoke ends GeckoGraph's access, not the user's.
+- The app may end a link on its own by deleting the record or marking it revoked; the next `sessionUrl` call answers `no_link`.
+- With derived secrets (2b) there is no row: answer `204` after the JWT check.
+- Don't end the user's own open app sessions here: a revoke ends GeckoGraph's access, not the user's. Do end the sessions the bridge made for that link (for example, mark its bridge session records ended), so none stays usable after the revoke.
 
 ## 4. The signed JWT, in short
 

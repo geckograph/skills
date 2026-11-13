@@ -73,6 +73,7 @@ geckograph.post('/api/geckograph/bridge/session', express.raw({ type: '*/*', lim
   }
   let body: { externalUserId?: unknown; linkId?: unknown; secret?: unknown };
   try { body = JSON.parse(raw.toString('utf8')); } catch { return res.sendStatus(400); }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return res.sendStatus(400); // not a JSON object
   const { externalUserId, linkId, secret } = body;
   if (typeof externalUserId !== 'string' || typeof linkId !== 'string' || typeof secret !== 'string') {
     return res.sendStatus(400);
@@ -105,6 +106,7 @@ geckograph.post('/api/geckograph/bridge/revoke', express.raw({ type: '*/*', limi
   }
   let body: { event?: unknown; externalUserId?: unknown; linkId?: unknown };
   try { body = JSON.parse(raw.toString('utf8')); } catch { return res.sendStatus(400); }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return res.sendStatus(400); // not a JSON object
   if (body.event !== 'link.revoked' || typeof body.externalUserId !== 'string' || typeof body.linkId !== 'string') {
     return res.sendStatus(400);
   }

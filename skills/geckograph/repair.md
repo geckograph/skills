@@ -1,0 +1,67 @@
+# Repairing a failing feature
+
+## Why the fix is in GeckoGraph, not the app
+A tool is a copy of a request the app's own screen sent during the scan, and the scan recorded the app's answer. The
+app handled that request. When a validation fails, the test sent something different from what the screen sent, or
+asked for something the screen never offers. The request the screen sent is the specification: make the tool match it.
+
+`list_validation_failures` lists only failures that are GeckoGraph's own: every outcome it shows starts with `FAILED_`.
+When the app itself failed, validation says so with its own outcome (`NOT_VALIDATED_APP_CALL_FAILED`: the screen's own call
+failed in the scan the same way; `NOT_VALIDATED_APP_DROPS_FIELD`: the app ignored a field its own screen also lost). Those are
+not validated, not failed, and they are not in the list.
+
+The list holds validation results only. A tool that failed when a real user called it, in chat or over MCP, is not
+in it: when the person reports one, find its feature (`list_features`) and validate it; a failure that validation also sees
+is listed, with its evidence.
+
+## Steps
+1. List the failures and rescan flags on the environment (`--env`). A rescan flag (`held (rescan)`) is a feature a rescan
+   added; it is served nowhere until it passes.
+2. Read the failure: `show_validation_failure` gives the outcome, the test's ask, and each call with its arguments and the
+   answer. Read the chat before deciding anything.
+3. Read the tool: `show_tool` gives the request the app's screen sent in the scan and the status the app returned.
+4. Compare the two. Typical differences, all fixed in GeckoGraph:
+   | What you see | Fix |
+   |---|---|
+   | Our call left out a field the screen sends | `tool_input` with `change: add` for that field; for a tool built from `geckograph.yml`, its line |
+   | Our call took a value from the wrong place (an old record, a guess) | `input_source` (the list tool and field it comes from), or `tool_input` with `change: user` when the person types it |
+   | A write was refused before it was sent: no source for the record's current list | `input_source` that gives the input the record's current list (the read tool that lists it, and the field in its answer), and a `check` that reads it back |
+   | The test asked for something the screen never offers | a `rule` that says what the screen allows |
+   | The feature uses a tool that belongs to another feature | `bind` with `as: none`, or `move_tool` |
+   | The tool's description or the feature's text misleads | `content`, or `rewrite` |
+   | The tool itself has the wrong shape (an input missing, required when the screen leaves it out, or tied to a list when the person types it) | `tool_input` (`change`: `add`, `optional` or `user`) first; for a tool built from `geckograph.yml`, its line, then `relearn`, steps 5 and 6 on `--env personal` (`validate --env personal --id <id>`), and only then `check --tools <n>` and `release --base <n>` |
+5. Make one fix, then validate that feature: on `--env personal` after a `geckograph.yml` line's relearn, since the environment you started on keeps the old tool until release. One fix at a time, so each result says what the fix did.
+6. Repeat until it passes twice in a row with the same fix; one pass out of two is a miss, not a repair. Stop when the same failure comes back with the same evidence as the try before, or after 50
+   steps on one feature, and report.
+
+## Edit kinds
+Each `geckograph edit_feature --env <env> --input '<json>'` takes exactly one of these. A key a kind does not list is refused, and a refusal names the field and prints the shape. Optional keys: `goalExamples`, `title`, `field` on `check`, `type` and `in` on `tool_input` (`type` is needed with `add`), `on` on `ui_only` (`false` gives the feature back to the agent). Tool wording goes through `geckograph content --env <env> --input '{"tool":"<tool>","label":"<label>","description":"<text>","confirm":true}'`.
+- `{"kind":"bind","id":"<feature id>","tool":"<tool>","as":"own|helper|none"}`
+- `{"kind":"move_tool","id":"<feature id>","tool":"<tool>","name":"<new feature name>","description":"<text>","goalExamples":["<ask>"]}`
+- `{"kind":"input_source","id":"<feature id>","input":"<input>","tool":"<list tool>","field":"<field in its answer>"}`
+- `{"kind":"tool_input","id":"<feature id>","tool":"<tool>","input":"<input>","change":"optional|user|add","type":"string|number|boolean","in":"body|query"}`
+- `{"kind":"check","id":"<feature id>","tool":"<read tool>","field":"<field>"}`
+- `{"kind":"rewrite","id":"<feature id>","name":"<name>","description":"<text>","goalExamples":["<ask>"]}`
+- `{"kind":"rule","id":"<feature id>","op":"add|update|delete","ruleId":"<rule id, for update and delete>","title":"<title>","text":"<text, for add and update>"}`
+- `{"kind":"test_hint","id":"<feature id>","text":"<text>"}`
+- `{"kind":"ui_only","id":"<feature id>","reason":"<why>","on":true|false}`
+- `{"kind":"hide","id":"<feature id>","reason":"<why>"}`
+- `{"kind":"suppress","id":"<feature id>","tool":"<tool>","reason":"<why>"}`
+- `{"kind":"lift","id":"<feature id>","controlId":"<control id>"}`
+
+## Never
+- Never change the app's code to make it accept what our tool sent. If you find a real bug in the app (it crashes or
+  answers wrongly on a request its own screen also sends), tell the person: what, where, and the evidence. Propose a
+  change only if they ask, and only change it after they say yes to that change. If a change you made, in the graph or
+  the app, turns out wrong, revert it; don't patch on top of it.
+- Never call a result an app limit without the app's own evidence: its error on a request shaped like the screen's, or a
+  refusal its own screen gives. A refusal from GeckoGraph's own checks, an error on arguments we built, or a missing tool
+  is ours.
+- Never give the agent more than the app's screens allow. If the screen hides or refuses an action, it stays refused: do not
+  widen a binding or call a route the screen does not offer.
+- A rule or description is served to every user of the app, so it must hold for any record: never name the test's own record or values in it. App-specific wording is what the graph is for.
+- Never hide, `ui_only` or `suppress` a feature just to empty the list. Hide one only for a reason you state, and tell the
+  person what else it takes with it (suppress cascades).
+- Never write a rule that refuses what the screen allows. A failure is not fixed by making the agent decline the ask.
+- Never pass `--yes` without the person's yes to real writes, and never mark a sign-in as a test tenant yourself.
+- Never count NOT VALIDATED as passed. Tell the person which features were proven and which were not, and why.

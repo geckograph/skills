@@ -44,7 +44,7 @@ Never commit a real key, and never point tests at GeckoGraph.
 
 | Test | Expect |
 | --- | --- |
-| a good token for a stored link | `204`, the row is gone, and `sessionUrl` then answers `404 {"error":"no_link"}` for it |
+| a good token for a stored link | `204`, the record is gone (or marked revoked, if the app ends records by status), and `sessionUrl` then answers `404 {"error":"no_link"}` for it |
 | the user holds two links; one is revoked | the other still gets `200` from `sessionUrl` |
 | a link that is already gone | `204` |
 | `aud` the session URL | `401`, the row stays |
@@ -74,6 +74,26 @@ Mock GeckoGraph's redeem endpoint.
 | GeckoGraph answers not `200` | an error to the frontend, no row |
 | the user already holds a link, and redeems a second one | two rows; the first link still gets `200` from `sessionUrl` |
 | the answer to the frontend | holds no secret and no `linkId`-secret pair |
+
+## Option B: derived secrets
+
+With derived secrets (contract.md, 2b), the JWT tests above all stand. These replace the link-row tests:
+
+| Test | Expect |
+| --- | --- |
+| the redeem route, for a signed-in user | the redeem is called with a new UUID `linkId` and the secret derived from it and **the session's user's** `externalUserId`; nothing is stored |
+| the body also carries another user's id | it is ignored: the secret is derived for the session's user |
+| two redeems by one user | two different `linkId`s and secrets; both get `200` from `sessionUrl` |
+| `sessionUrl`, a good token and the derived secret of an active user | `200`, a new session |
+| a secret derived for another `linkId`, or for another user | `404 {"error":"no_link"}` |
+| a secret derived with another key (the key was changed) | `404 {"error":"no_link"}` |
+| an unknown or inactive user with a secret derived for them | `404 {"error":"no_link"}` |
+| a secret of another length, or not base64url | `404 {"error":"no_link"}`, never an exception |
+| a `linkId` that is not a lowercase UUID (uppercase, or holding a newline) | `404 {"error":"no_link"}` |
+| a good token over the body `null`, or an array | `400` |
+| `revokeUrl`, a good token | `204` |
+| `revokeUrl`, a bad token | `401` |
+| the key is read from server config | the code holds no key; a missing key makes both endpoints fail closed (`5xx` or `404`), never accept |
 
 ## End to end
 
