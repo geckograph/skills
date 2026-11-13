@@ -3,6 +3,7 @@
 
 Config (server settings, per environment):
   GECKOGRAPH_PROVISION_KEY   the app's mcp:provision key (a secret: server config only)
+  GECKOGRAPH_ENVIRONMENT     the bridge environment's name in GeckoGraph (e.g. staging, production)
   GECKOGRAPH_SESSION_URL     the session URL exactly as registered in GeckoGraph
   GECKOGRAPH_REVOKE_URL      the revoke URL exactly as registered
 """
@@ -31,6 +32,24 @@ def sha256_hex(text: str) -> str:
 def no_link() -> JSONResponse:
     # The same answer for an unknown link, a wrong secret, another user's link and an inactive user.
     return JSONResponse({"error": "no_link"}, status_code=404)
+
+
+# 0. The panel page asks for a widget session for the signed-in user, and passes it to GeckoGraph.mountMcpPanel.
+#    It lasts an hour: the page calls this again before expiresAt and passes the new one to panel.setWidgetSession.
+@router.post("/api/geckograph/widget-session")
+async def widget_session(user=Depends(current_user)):
+    # `user` is the SESSION's user. Never an id from the body.
+    async with httpx.AsyncClient(timeout=10) as client:
+        answer = await client.post(
+            f"{GECKOGRAPH}/api/mcp/v1/apps/{APP_SLUG}/widget-sessions",
+            headers={"Authorization": f"Bearer {os.environ['GECKOGRAPH_PROVISION_KEY']}"},
+            json={"externalUserId": user.external_id, "environment": os.environ["GECKOGRAPH_ENVIRONMENT"]},
+        )
+    # 403 domain_unverified or headless_off, 409 no_origins: a dashboard setting is missing (contract.md, 1a).
+    if answer.status_code != 201:
+        return Response(status_code=502)
+    created = answer.json()
+    return {"widgetSession": created["widgetSession"], "expiresAt": created["expiresAt"]}
 
 
 # 1. The frontend posts the link request here, over the user's own session (onBridgeLinkRequest).
@@ -89,10 +108,8 @@ async def bridge_session(request: Request):
     # A NEW session, from the same code the login runs after the password check.
     session = await start_session_for(user.id)
     return JSONResponse({
-        "headers": session.headers,  # e.g. {"Authorization": "Bearer ..."}, or {}
-        "cookies": [
-            {"name": c.name, "value": c.value, "domain": c.domain, "path": c.path or "/"} for c in session.cookies
-        ],
+        "headers": session.headers,  # e.g. {"Authorization": "Bearer ..."} (always `Scheme value`), or {}
+        "cookies": [{"name": c.name, "value": c.value} for c in session.cookies],  # GeckoGraph reads only name and value
         "expiresAt": session.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),  # UTC
     })
 

@@ -51,6 +51,17 @@ Never commit a real key, and never point tests at GeckoGraph.
 | a bad signature, an expired token, a changed body, a replayed `jti` | `401` each, the row stays |
 | `event` another value | `400`, the row stays |
 
+## The widget session route
+
+Mock GeckoGraph's widget sessions endpoint.
+
+| Test | Expect |
+| --- | --- |
+| a signed-in user asks for one | GeckoGraph is called with the app's provision key, **the session's user's** `externalUserId` and the bridge environment; the page gets `widgetSession` and `expiresAt` |
+| the body also carries another user's id | it is ignored: the call names the session's user |
+| not signed in | the app's usual `401` or login redirect; GeckoGraph is not called |
+| GeckoGraph answers not `201` | an error to the page, with no detail |
+
 ## The redeem route (the frontend's post)
 
 Mock GeckoGraph's redeem endpoint.
@@ -64,15 +75,6 @@ Mock GeckoGraph's redeem endpoint.
 | the user already holds a link, and redeems a second one | two rows; the first link still gets `200` from `sessionUrl` |
 | the answer to the frontend | holds no secret and no `linkId`-secret pair |
 
-## The API claim path (only when the app starts connect links from its backend)
-
-| Test | Expect |
-| --- | --- |
-| `state` matches and the session's user is the connect session's user | the claim's `linkId` and `sha256(secret)` are stored for that user |
-| `state` matches but the session's user is another user | nothing is stored (and, when checked before the claim, the claim is not made) |
-| `state` doesn't match | no claim, nothing stored |
-| a claim answer without `linkId` | the token is handled as before, no link row |
-
 ## End to end
 
-The tests above run in CI. Once deployed to an environment and registered, a developer runs `geckograph mcp auth check --app <slug> --env <environment>` at their desk, signed in to the app (SKILL.md).
+The tests above run in CI. Once deployed to an environment and registered, a developer runs `geckograph mcp auth check --app <slug> --env <environment>` at their desk, signed in to the app (SKILL.md), or a person runs "Test MCP auth" on the dashboard's Session bridge tab from their own signed-in browser.

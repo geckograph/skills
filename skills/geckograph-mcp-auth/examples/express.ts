@@ -4,6 +4,7 @@
  *
  * Config (server settings, per environment):
  *   GECKOGRAPH_PROVISION_KEY      the app's mcp:provision key (a secret: server config only)
+ *   GECKOGRAPH_ENVIRONMENT        the bridge environment's name in GeckoGraph (e.g. staging, production)
  *   GECKOGRAPH_SESSION_URL        the session URL exactly as registered in GeckoGraph
  *   GECKOGRAPH_REVOKE_URL         the revoke URL exactly as registered
  */
@@ -20,6 +21,24 @@ const sameHex = (a: string, b: string) =>
   a.length === b.length && timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
 
 export const geckograph = express.Router();
+
+// 0. The panel page asks for a widget session for the signed-in user, and passes it to GeckoGraph.mountMcpPanel.
+//    It lasts an hour: the page calls this again before expiresAt and passes the new one to panel.setWidgetSession.
+geckograph.post('/api/geckograph/widget-session', requireSignedIn, async (req: Request, res: Response) => {
+  const user = req.user!; // the SESSION's user. Never an id from the body.
+  const created = await fetch(`${GECKOGRAPH}/api/mcp/v1/apps/${APP_SLUG}/widget-sessions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.GECKOGRAPH_PROVISION_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ externalUserId: user.externalId, environment: process.env.GECKOGRAPH_ENVIRONMENT }),
+  });
+  // 403 domain_unverified or headless_off, 409 no_origins: a dashboard setting is missing (contract.md, 1a).
+  if (created.status !== 201) return res.sendStatus(502);
+  const { widgetSession, expiresAt } = (await created.json()) as { widgetSession: string; expiresAt: string };
+  return res.json({ widgetSession, expiresAt });
+});
 
 // 1. The frontend posts the link request here, over the user's own session (onBridgeLinkRequest).
 geckograph.post('/api/geckograph/bridge-links', express.json(), requireSignedIn, async (req: Request, res: Response) => {
@@ -72,8 +91,8 @@ geckograph.post('/api/geckograph/bridge/session', express.raw({ type: '*/*', lim
   // A NEW session, from the same code the login runs after the password check.
   const session = await startSessionFor(user.id);
   return res.status(200).json({
-    headers: session.headers, // e.g. { Authorization: 'Bearer …' }, or {}
-    cookies: session.cookies.map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path ?? '/' })),
+    headers: session.headers, // e.g. { Authorization: 'Bearer …' } (always `Scheme value`), or {}
+    cookies: session.cookies.map((c) => ({ name: c.name, value: c.value })), // GeckoGraph reads only name and value
     expiresAt: session.expiresAt.toISOString(),
   });
 });
