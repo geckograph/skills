@@ -24,8 +24,13 @@ export const geckograph = express.Router();
 
 // 0. The panel page asks for a widget session for the signed-in user, and passes it to GeckoGraph.mountMcpPanel.
 //    It lasts an hour: the page calls this again before expiresAt and passes the new one to panel.setWidgetSession.
+//    Each user's session is reused until 5 minutes before it ends: the provision key's limit is shared by every user.
+//    (One process here; with several instances, keep it in the app's shared cache instead.)
+const widgetSessions = new Map<string, { widgetSession: string; expiresAt: string }>();
 geckograph.post('/api/geckograph/widget-session', requireSignedIn, async (req: Request, res: Response) => {
   const user = req.user!; // the SESSION's user. Never an id from the body.
+  const kept = widgetSessions.get(user.externalId);
+  if (kept && Date.parse(kept.expiresAt) - Date.now() > 5 * 60 * 1000) return res.json(kept);
   const created = await fetch(`${GECKOGRAPH}/api/mcp/v1/apps/${APP_SLUG}/widget-sessions`, {
     method: 'POST',
     headers: {
@@ -37,6 +42,7 @@ geckograph.post('/api/geckograph/widget-session', requireSignedIn, async (req: R
   // 403 domain_unverified or headless_off, 409 no_origins: a dashboard setting is missing (contract.md, 1a).
   if (created.status !== 201) return res.sendStatus(502);
   const { widgetSession, expiresAt } = (await created.json()) as { widgetSession: string; expiresAt: string };
+  widgetSessions.set(user.externalId, { widgetSession, expiresAt });
   return res.json({ widgetSession, expiresAt });
 });
 

@@ -32,8 +32,10 @@ Content-Type: application/json
 ```
 
 - Add a backend route the page calls over the user's own app session (for example `POST /api/geckograph/widget-session`). It takes the user from the **session**, never from the body, and answers `{ widgetSession, expiresAt }`.
-- `environment` is the environment's name. Name the bridge environment: the panel serves the bridge of its widget session's environment only. Leave it out and the app's default environment is used.
+- When sessions are tied to a tenant, `externalUserId` names the session's user and the session's tenant (SKILL.md, "Which tenant"), and the redeem sends the same value.
+- `environment` is the environment's name exactly as GeckoGraph has it, which may differ from the word people use for it ("development", "staging"). For a developer's own environment from `geckograph dev`, it is the `name` in `.geckograph.local`; otherwise ask the person, or read it from the dashboard's Environments page. Write that exact name into the app's config and into the steps you give the person, never the person's word for it. A `404 not_found` means the name is wrong. Name the bridge environment: the panel serves the bridge of its widget session's environment only. Leave it out and the app's default environment is used.
 - A widget session lasts 1 hour. Before `expiresAt`, call the route again and pass the new value to the panel's `setWidgetSession` (1b). The panel reloads with it.
+- Reuse it: keep each user's widget session on the server (keyed by the `externalUserId`) and answer the same one until about 5 minutes before its `expiresAt`, instead of creating one per page load. The key's limit is shared by every user of the app.
 - It works only from the origins the environment lists when it is created. After adding an origin, create a new one.
 - Never log it. It goes to the browser, for this one user only.
 
@@ -43,10 +45,11 @@ Content-Type: application/json
 | Headless MCP is off in that environment | `403 {"error":"headless_off"}` | Turn on Headless MCP for the environment. |
 | the environment lists no origins | `409 {"error":"no_origins", "message": "…"}` | Add the app's origin to the environment on the Environments page. |
 | no such environment | `404 {"error":"not_found"}` | Name an environment of the app. |
+| a personal dev environment (`dev-…`), which serves only its owner | `409 {"error":"dev_environment", "message": "…"}` | Name a shared environment (preview, staging or production). |
 | a body field is missing or not allowed | `400 {"error":"invalid_request", "field": "…"}` | Send only `externalUserId` and `environment`. |
 | no key, or not a live key | `401 {"error":"invalid_key"}` | Send the `mcp:provision` key. |
 | not this app's `mcp:provision` key, or an `Origin` header | `403 {"error":"forbidden"}` | Use the key made for this app, from the server. |
-| more than 30 a minute for one key (shared with connect sessions) | `429 {"error":"rate_limited"}` | Create one per page load, not per render. |
+| more than 10 a minute for one end user, or 600 for one key | `429 {"error":"rate_limited"}` | Reuse each user's widget session until shortly before it expires (above). |
 
 ### 1b. The page loads the panel
 
@@ -100,6 +103,20 @@ setInterval(async () => {
 - The page the panel is mounted on is the **panel URL** you register. GeckoGraph opens it with its own query parameters (`gg_authorize` for "Continue with {app}", `gg_check` for an auth check). Keep them, also through the app's login redirect, so a signed-out user signs in and comes back to the same URL.
 - Use the app's usual CSRF protection on both backend routes, as on any state-changing route.
 
+### 1b-2. The chat widget's MCP button
+
+When the app's pages already carry GeckoGraph's chat widget (its script tag), the widget has an MCP button that opens the same panel. The button is a GeckoGraph setting (Widget studio, MCP tab, "Show the MCP button", on by default): write no button and no panel of your own for it. It shows once the widget has a widget session, so on every page with the chat widget, hand it the same session and hook:
+
+```ts
+const first = await newWidgetSession();
+GeckoGraph.setMcpWidgetSession(first.widgetSession, { onBridgeLinkRequest });   // the same hook as mountMcpPanel's
+// Refresh it before it ends, as for the panel: GeckoGraph.setMcpWidgetSession(next.widgetSession)
+```
+
+- Call it after the widget's script has loaded (`window.GeckoGraph` is set). Pass `onBridgeLinkRequest` here: a script tag can't.
+- Only for a signed-in user. A page with no signed-in user hands it no session, and the widget shows no MCP button.
+- This is besides the panel page of 1b, not instead of it: GeckoGraph opens the panel URL for "Continue with {app}" and for auth checks.
+
 ### 1c. The backend redeems it
 
 The backend route takes the user from the **session**, never from the body, and redeems:
@@ -137,6 +154,7 @@ The link store is the app's own data, so it is designed like the app's own table
 | --- | --- |
 | link id | GeckoGraph's `linkId`, a UUID, unique. The app may also give the record its own key in its usual style. |
 | user | the app's user the link belongs to (the **session's** user at redeem), a user of the kind the graph signs in as, in that user record's own key type |
+| tenant | only when sessions are tied to one tenant (SKILL.md, "Which tenant"): the tenant of the **session** at redeem, in the tenant record's own key type |
 | secret hash | lowercase hex SHA-256 of the secret, 64 characters. Never the secret. |
 | created | when it was made |
 
@@ -187,7 +205,7 @@ Content-Type: application/json
 
 GeckoGraph answers `200 { "linkId", "secret" }` with the values the app sent, and keeps the secret as it keeps its own. It refuses with `400 {"error":"invalid_request"}` when only one of `linkId` and `secret` is sent, the `linkId` is not a lowercase UUID or is already in use, or the secret is not base64url of at least 32 bytes. Any other refusal is as in 1c. Store nothing either way.
 
-**`POST {sessionUrl}` (section 3).** After the JWT check, refuse a `linkId` that is not a lowercase UUID (`404 {"error":"no_link"}`; this also keeps the HMAC input unambiguous), then compute the secret from the body's `linkId` and `externalUserId` and compare it with the body's `secret` in constant time. Answer `200` only when they match and the user exists and is active; then start a new session as in section 3. Every other case answers `404 {"error":"no_link"}`, with the same body.
+**`POST {sessionUrl}` (section 3).** After the JWT check, refuse a `linkId` that is not a lowercase UUID (`404 {"error":"no_link"}`; this also keeps the HMAC input unambiguous), then compute the secret from the body's `linkId` and `externalUserId` and compare it with the body's `secret` in constant time. Answer `200` only when they match and the user exists and is active (and, when `externalUserId` names a tenant, the user still has access to it; the HMAC covers the tenant through `externalUserId`); then start a new session as in section 3, in that tenant. Every other case answers `404 {"error":"no_link"}`, with the same body.
 
 **`POST {revokeUrl}` (section 3).** After the JWT check, answer `204`. There is nothing to delete: GeckoGraph deletes its copy of the secret whether or not the call succeeds, and never presents it again.
 
@@ -216,9 +234,10 @@ Find the link record by `linkId`. Answer `200` only when all of these hold:
 - the record exists and is live (not marked revoked, if the app ends records by status);
 - its user is the user `externalUserId` names;
 - `sha256(secret)` equals `secret_sha256` (compare in constant time);
-- the user is active (not disabled, deleted, locked or otherwise unable to sign in to the app now).
+- the user is active (not disabled, deleted, locked or otherwise unable to sign in to the app now);
+- when links carry a tenant: `externalUserId` names the record's tenant, and the user still has access to that tenant now.
 
-Then start a **new** session for that user with the app's own sign-in code, the same function the login runs after the password check, and answer what the app's frontend gets:
+Then start a **new** session for that user (in the record's tenant, when links carry one; never the user's current tenant) with the app's own sign-in code, the same function the login runs after the password check, and answer what the app's frontend gets:
 
 ```http
 200 OK
@@ -255,6 +274,7 @@ Content-Type: application/json
 | the row's user is not `externalUserId`'s user, or no such user | `404 {"error":"no_link"}` |
 | the secret's hash doesn't match | `404 {"error":"no_link"}` |
 | the user is inactive | `404 {"error":"no_link"}` |
+| the user no longer has access to the link's tenant | `404 {"error":"no_link"}` |
 | the body is not the JSON above (after a good JWT) | `400` |
 | all good | `200 { headers, cookies, expiresAt }` |
 

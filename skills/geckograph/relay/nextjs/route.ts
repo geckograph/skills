@@ -66,6 +66,10 @@ async function relay(req: NextRequest, path: string[]): Promise<Response> {
   }
   // A same-origin GET often carries no Origin; GeckoGraph checks the page's origin, so name it.
   if (!headers.get("origin")) headers.set("origin", self);
+  // The MCP panel's calls carry its widget session as a bearer token. Forward that one kind only: the app's own
+  // tokens never reach GeckoGraph.
+  const auth = req.headers.get("authorization");
+  if (auth?.startsWith("Bearer ggws_")) headers.set("authorization", auth);
 
   let body: string | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {
@@ -111,5 +115,9 @@ export async function GET(req: NextRequest, ctx: Context) {
 }
 
 export async function POST(req: NextRequest, ctx: Context) {
+  return relay(req, (await ctx.params).path);
+}
+
+export async function DELETE(req: NextRequest, ctx: Context) {
   return relay(req, (await ctx.params).path);
 }

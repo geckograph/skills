@@ -49,6 +49,7 @@ public sealed class GeckoGraphRelayController : ControllerBase
 
     [HttpGet("{**path}")]
     [HttpPost("{**path}")]
+    [HttpDelete("{**path}")]
     public async Task Relay(string path, CancellationToken cancellationToken)
     {
         var self = $"{Request.Scheme}://{Request.Host.Value}";
@@ -94,6 +95,10 @@ public sealed class GeckoGraphRelayController : ControllerBase
         }
         // A same-origin GET often carries no Origin; GeckoGraph checks the page's origin, so name it.
         if (!upstream.Headers.Contains("Origin")) upstream.Headers.TryAddWithoutValidation("Origin", self);
+        // The MCP panel's calls carry its widget session as a bearer token. Forward that one kind only: the app's own
+        // tokens never reach GeckoGraph.
+        var panelAuth = Request.Headers.Authorization.ToString();
+        if (panelAuth.StartsWith("Bearer ggws_", StringComparison.Ordinal)) upstream.Headers.TryAddWithoutValidation("Authorization", panelAuth);
 
         if (!HttpMethods.IsGet(Request.Method))
         {

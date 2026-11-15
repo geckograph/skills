@@ -16,7 +16,7 @@
 //      <location path="api/geckograph">
 //        <system.web><authorization><allow users="*" /></authorization></system.web>
 //        <system.webServer><handlers>
-//          <add name="GeckoGraphRelay" path="*" verb="GET,POST" type="GeckoGraphRelayHandler" preCondition="integratedMode" />
+//          <add name="GeckoGraphRelay" path="*" verb="GET,POST,DELETE" type="GeckoGraphRelayHandler" preCondition="integratedMode" />
 //        </handlers></system.webServer>
 //      </location>
 //    If the app's route table would claim the path first, add routes.Ignore("api/geckograph/{*path}") to it.
@@ -127,6 +127,10 @@ public class GeckoGraphRelayHandler : IHttpHandler
         }
         // A same-origin GET often carries no Origin; GeckoGraph checks the page's origin, so name it.
         if (string.IsNullOrEmpty(upstream.Headers["Origin"])) upstream.Headers["Origin"] = self;
+        // The MCP panel's calls carry its widget session as a bearer token. Forward that one kind only: the app's own
+        // tokens never reach GeckoGraph.
+        var panelAuth = req.Headers["Authorization"];
+        if (panelAuth != null && panelAuth.StartsWith("Bearer ggws_", StringComparison.Ordinal)) upstream.Headers["Authorization"] = panelAuth;
 
         if (req.HttpMethod != "GET")
         {

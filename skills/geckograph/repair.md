@@ -63,5 +63,5 @@ Each `geckograph edit_feature --env <env> --input '<json>'` takes exactly one of
 - Never hide, `ui_only` or `suppress` a feature just to empty the list. Hide one only for a reason you state, and tell the
   person what else it takes with it (suppress cascades).
 - Never write a rule that refuses what the screen allows. A failure is not fixed by making the agent decline the ask.
-- Never pass `--yes` without the person's yes to real writes, and never mark a sign-in as a test tenant yourself.
+- Never pass `--yes` without the person's yes to real writes, and never mark a sign-in as a test tenant, or authorize a test account, yourself.
 - Never count NOT VALIDATED as passed. Tell the person which features were proven and which were not, and why.

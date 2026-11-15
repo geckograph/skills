@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
@@ -36,9 +37,17 @@ def no_link() -> JSONResponse:
 
 # 0. The panel page asks for a widget session for the signed-in user, and passes it to GeckoGraph.mountMcpPanel.
 #    It lasts an hour: the page calls this again before expiresAt and passes the new one to panel.setWidgetSession.
+#    Each user's session is reused until 5 minutes before it ends: the provision key's limit is shared by every user.
+#    (One process here; with several workers, keep it in the app's shared cache instead.)
+_widget_sessions: dict[str, dict] = {}
+
+
 @router.post("/api/geckograph/widget-session")
 async def widget_session(user=Depends(current_user)):
     # `user` is the SESSION's user. Never an id from the body.
+    kept = _widget_sessions.get(user.external_id)
+    if kept and datetime.fromisoformat(kept["expiresAt"].replace("Z", "+00:00")) - datetime.now(timezone.utc) > timedelta(minutes=5):
+        return kept
     async with httpx.AsyncClient(timeout=10) as client:
         answer = await client.post(
             f"{GECKOGRAPH}/api/mcp/v1/apps/{APP_SLUG}/widget-sessions",
@@ -49,7 +58,9 @@ async def widget_session(user=Depends(current_user)):
     if answer.status_code != 201:
         return Response(status_code=502)
     created = answer.json()
-    return {"widgetSession": created["widgetSession"], "expiresAt": created["expiresAt"]}
+    kept = {"widgetSession": created["widgetSession"], "expiresAt": created["expiresAt"]}
+    _widget_sessions[user.external_id] = kept
+    return kept
 
 
 # 1. The frontend posts the link request here, over the user's own session (onBridgeLinkRequest).
