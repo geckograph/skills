@@ -15,6 +15,8 @@ import type { NextRequest } from "next/server";
  *   GECKOGRAPH_AGENT_URL       default https://app.geckograph.com
  *   GECKOGRAPH_DISCOVERY_URL   default https://app.geckograph.com
  *   GECKOGRAPH_TARGET_ORIGIN   optional: the origin the agent calls the app's API at, when it is not this one
+ *   GECKOGRAPH_DEV_TOKEN       on a developer's machine only: written by `geckograph widget_config`, renewed by
+ *                              `geckograph dev`. Never set it in a deploy.
  *
  * GeckoGraph's relearn never turns /api/geckograph/* into a tool, so it needs no geckograph.yml line.
  */
@@ -34,6 +36,24 @@ const FORWARD_HEADERS = [
 
 /** Encoding and length describe the upstream bytes, not what this route sends; a cookie must not land on the app. */
 const STRIP_RESPONSE_HEADERS = new Set(["content-encoding", "content-length", "transfer-encoding", "connection", "set-cookie"]);
+
+/** The agent calls that carry the dev token in their body: a chat's start and its messages. */
+const DEV_TOKEN_BODY = /^\/api\/agent\/conversations\/(start|[^/]+\/messages(\/stream)?)$/;
+
+/**
+ * The developer's dev token, for a page on their own machine in development. The relay attaches it to each call, so
+ * the token is read fresh from the local config and never sits in a page or a build.
+ */
+function localDevToken(origin: string | null): string | undefined {
+  const token = process.env.GECKOGRAPH_DEV_TOKEN?.trim();
+  if (!token || process.env.NODE_ENV === "production" || !origin) return undefined;
+  try {
+    const host = new URL(origin).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "[::1]" ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function refuse(status: number, message: string): Response {
   return new Response(message, { status });
@@ -66,6 +86,8 @@ async function relay(req: NextRequest, path: string[]): Promise<Response> {
   }
   // A same-origin GET often carries no Origin; GeckoGraph checks the page's origin, so name it.
   if (!headers.get("origin")) headers.set("origin", self);
+  const devToken = localDevToken(headers.get("origin"));
+  if (devToken) headers.set("x-geckograph-dev-token", devToken);
   // The MCP panel's calls carry its widget session as a bearer token. Forward that one kind only: the app's own
   // tokens never reach GeckoGraph.
   const auth = req.headers.get("authorization");
@@ -82,9 +104,20 @@ async function relay(req: NextRequest, path: string[]): Promise<Response> {
         if (cookie) start.auth = { ...(start.auth ?? {}), cookies: cookie };
         const target = process.env.GECKOGRAPH_TARGET_ORIGIN;
         if (target) start.targetOrigin = new URL(target).origin;
+        if (devToken) start.devWidgetToken = devToken;
         body = JSON.stringify(start);
       } catch {
         return refuse(400, "Conversation start is not JSON");
+      }
+    } else if (isAgent && devToken && DEV_TOKEN_BODY.test(sub)) {
+      try {
+        const message = JSON.parse(body || "{}");
+        if (message && typeof message === "object" && !Array.isArray(message)) {
+          message.devWidgetToken = devToken;
+          body = JSON.stringify(message);
+        }
+      } catch {
+        // Not JSON: passed on as it came.
       }
     }
   }

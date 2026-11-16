@@ -30,9 +30,17 @@ is listed, with its evidence.
    | The feature uses a tool that belongs to another feature | `bind` with `as: none`, or `move_tool` |
    | The tool's description or the feature's text misleads | `content`, or `rewrite` |
    | The tool itself has the wrong shape (an input missing, required when the screen leaves it out, or tied to a list when the person types it) | `tool_input` (`change`: `add`, `optional` or `user`) first; for a tool built from `geckograph.yml`, its line, then `relearn`, steps 5 and 6 on `--env personal` (`validate --env personal --id <id>`), and only then `check --tools <n>` and `release --base <n>` |
-5. Make one fix, then validate that feature: on `--env personal` after a `geckograph.yml` line's relearn, since the environment you started on keeps the old tool until release. One fix at a time, so each result says what the fix did.
+5. Make one fix on your personal environment (`--env personal`; the edit is recorded), then validate that feature there (`validate --env personal --id <id>`), and try it in the local widget. A `geckograph.yml` line's fix needs its relearn first. One fix at a time, so each result says what the fix did.
 6. Repeat until it passes twice in a row with the same fix; one pass out of two is a miss, not a repair. Stop when the same failure comes back with the same evidence as the try before, or after 50
    steps on one feature, and report.
+7. `geckograph promote --env <env>` replays your recorded edits into `<env>`'s draft and prints, per feature, what it
+   applied (with the command that validates it on the draft) and what it skipped and why: the draft already changed that
+   feature, the feature is not in the draft, or the edit no longer applies there. When your personal copy was made from
+   another version than `<env>` serves, it says so first and carries no local pass. Validate each applied feature once
+   on `<env>`: the draft's save needs that pass. A switch-off (`suppress`) lands in the draft and takes effect when a
+   person saves it; a `hide` stays on your personal environment. A feature without two passes on your personal environment
+   is listed as not proven locally and stays there, still to send; when your local app cannot prove it, repair it on
+   `<env>`'s draft directly and say why.
 
 ## Edit kinds
 Each `geckograph edit_feature --env <env> --input '<json>'` takes exactly one of these. A key a kind does not list is refused, and a refusal names the field and prints the shape. Optional keys: `goalExamples`, `title`, `field` on `check`, `type` and `in` on `tool_input` (`type` is needed with `add`), `on` on `ui_only` (`false` gives the feature back to the agent). Tool wording goes through `geckograph content --env <env> --input '{"tool":"<tool>","label":"<label>","description":"<text>","confirm":true}'`.
@@ -63,5 +71,5 @@ Each `geckograph edit_feature --env <env> --input '<json>'` takes exactly one of
 - Never hide, `ui_only` or `suppress` a feature just to empty the list. Hide one only for a reason you state, and tell the
   person what else it takes with it (suppress cascades).
 - Never write a rule that refuses what the screen allows. A failure is not fixed by making the agent decline the ask.
-- Never pass `--yes` without the person's yes to real writes, and never mark a sign-in as a test tenant, or authorize a test account, yourself.
+- Real writes go only through the test account a person authorized for the tenant in the dashboard. Never mark a sign-in as a test tenant, or authorize a test account, yourself.
 - Never count NOT VALIDATED as passed. Tell the person which features were proven and which were not, and why.

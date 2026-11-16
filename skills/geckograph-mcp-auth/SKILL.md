@@ -34,10 +34,10 @@ The geckograph skill's rule "Never call the GeckoGraph API directly" is about yo
 
 ## Before you start
 
-A person does these in the GeckoGraph dashboard, on the MCP page, as an owner or admin (contract.md, "What the app needs from GeckoGraph"). Ask them; you can't do them.
+A person does these in the GeckoGraph dashboard, on the MCP page, as an owner or admin (contract.md, "What the app needs from GeckoGraph"). Ask them; you can't do them. They are for the deployed environments (staging, production): a local test on the developer's own machine needs none of them ("Try it locally", below).
 
 - Verify the app's domain (Domain tab): a TXT record at the DNS provider, then "Check now".
-- Create an `mcp:provision` key (Provisioning tab). It needs the verified domain, and it is shown once. Each environment's deploy needs it set as a server secret (for example `GECKOGRAPH_PROVISION_KEY`). Never commit it.
+- Create an `mcp:provision` key (Provisioning tab). It needs the verified domain, and it is shown once. Each environment's deploy needs it set as a server secret, under the setting name `geckograph mcp local` writes locally (`GECKOGRAPH_PROVISION_KEY` on Node, `GeckoGraph:ProvisionKey` on ASP.NET Core, `GeckoGraphProvisionKey` on .NET Framework), beside the bridge environment's name (`GECKOGRAPH_ENVIRONMENT`, `GeckoGraph:Environment`, `GeckoGraphEnvironment`). Never commit it.
 - In the environment the bridge is for, turn on Headless MCP and list the app's page origins (Environments page).
 
 ## Steps
@@ -58,8 +58,22 @@ A person does these in the GeckoGraph dashboard, on the MCP page, as an owner or
    If the app's pages carry GeckoGraph's chat widget, also hand the same widget session and `onBridgeLinkRequest` to it with `GeckoGraph.setMcpWidgetSession` on each page with the widget, refreshed the same way (contract.md, "The chat widget's MCP button"). Its MCP button is a GeckoGraph setting: build no button or second panel for it.
 7. **Add `POST {sessionUrl}` and `POST {revokeUrl}`**, each behind the JWT check (verify-jwt.md). Read the raw body bytes before any JSON parsing.
 8. **Write the tests** in testing.md, and run them.
-9. **Register the three URLs** for one environment in the GeckoGraph dashboard (the app's Session bridge tab): the session URL, the revoke URL and the panel URL. Each is `https`, has no query string or fragment, and is on the app's registrable domain (contract.md, section 3). A person registers them, as an owner or admin. Each environment (staging, production) has its own deployment, so its own URLs. Turn the bridge on in staging first.
+9. **Register the three URLs** for one deployed environment in the GeckoGraph dashboard (the app's Session bridge tab; on the personal environment, `geckograph mcp local` registers local URLs instead, "Try it locally"): the session URL, the revoke URL and the panel URL. Each is `https`, has no query string or fragment, and is on the app's registrable domain (contract.md, section 3). A person registers them, as an owner or admin. Each environment (staging, production) has its own deployment, so its own URLs. Turn the bridge on in staging first.
 10. **Check it end to end** with `geckograph mcp auth check` (below), or have a person click "Run the test" under "Test MCP auth" on the Session bridge tab. It runs the same check from their own signed-in browser.
+
+## Try it locally
+
+Before deploying, try the whole flow on the developer's machine, on their personal environment (the one `geckograph dev` opens). Nothing is set up in the dashboard for it: no verified domain, no `mcp:provision` key, no URL registration.
+
+1. Check the tunnel with `geckograph dev --status`. When it is not running, start it yourself with `geckograph dev --start --local <host:port>`, pointed at the app's local server: it runs in the background, and `geckograph dev --stop` stops it. The status names the local app the tunnel points at: when that is not this server app's host and port, stop it and start it again with that one. Before the next step, run `geckograph dev --status` again until it says the tunnel is online. Only when your tool permissions refuse it, give the person that one complete command, with this repo's absolute path, to run in their own terminal.
+2. Build steps 1 to 8 as above. The app reads its provisioning credential and environment name from its config, the same settings a deploy sets (Before you start).
+3. Run `geckograph mcp local --dir <the server app's folder> --session-url http://localhost:<port>/… --revoke-url http://localhost:<port>/… --panel-url http://localhost:<port>/…`, with the app's own local routes. It writes the developer's dev token (as the provisioning credential) and the personal environment's name into that app's git-ignored local config, and registers the three URLs on the personal environment. Rerun it without the URLs to see what is registered, or with `--off` to turn the bridge off. Restart the app so it reads the new config.
+4. Check it: `geckograph mcp auth check --app <slug> --env personal`, or use the panel or the chat widget's MCP button on the local page.
+
+- GeckoGraph calls the session and revoke URLs through `geckograph dev`'s tunnel, so they work only while it runs, and reach the host and port `geckograph dev --local` points at: register them on that same port. The panel URL opens in the developer's own browser. Each JWT's audience is the URL of the endpoint it calls, as registered: the session URL on session calls and the revoke URL on revoke calls (`http://localhost:…` locally). Verify each against its own URL locally, and against the deployed URLs in each deployed environment.
+- Agent tokens made on the personal environment are the developer's local test: they last at most 12 hours and work only while `geckograph dev` runs. End users of the deployed app use the deployed environments.
+- `geckograph dev` renews the dev token while it runs and writes the new one into the same config. An app that reads its config only at startup keeps the old token: restart it when its provisioning calls start to answer 401 `invalid_key`. Never commit that file.
+- On the personal environment the dev token makes the calls the local flow needs (widget sessions, bridge redeems, connect and claim, minting, listing and revoking its own tokens). An auth check through the provisioning API and a disconnect (`DELETE /end-users/…`) are refused there with 409 `dev_environment`: they take a provisioning key on a shared environment.
 
 ## Rules
 

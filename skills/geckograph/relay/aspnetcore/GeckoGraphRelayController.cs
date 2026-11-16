@@ -12,6 +12,9 @@
 //   GeckoGraph:AgentUrl       default https://app.geckograph.com
 //   GeckoGraph:DiscoveryUrl   default https://app.geckograph.com
 //   GeckoGraph:TargetOrigin   optional: the origin the agent calls the app's API at, when it is not this one
+//   GeckoGraph:DevToken       on a developer's machine only: written by `geckograph widget_config` to the
+//                             gitignored appsettings.Local.json (load it with reloadOnChange: true) and renewed by
+//                             `geckograph dev`. Never set it in a deploy.
 //
 // Behind a proxy that terminates TLS, enable forwarded headers so Request.Scheme and Request.Host are the
 // public origin; otherwise the same-origin check below refuses every POST.
@@ -43,9 +46,29 @@ public sealed class GeckoGraphRelayController : ControllerBase
         "Content-Encoding", "Content-Length", "Transfer-Encoding", "Connection", "Set-Cookie",
     };
 
-    private readonly IConfiguration _configuration;
+    private static readonly System.Text.RegularExpressions.Regex DevTokenBody =
+        new(@"^api/agent/conversations/(start|[^/]+/messages(/stream)?)$");
 
-    public GeckoGraphRelayController(IConfiguration configuration) => _configuration = configuration;
+    private readonly IConfiguration _configuration;
+    private readonly IWebHostEnvironment _environment;
+
+    public GeckoGraphRelayController(IConfiguration configuration, IWebHostEnvironment environment)
+    {
+        _configuration = configuration;
+        _environment = environment;
+    }
+
+    /// <summary>
+    /// The developer's dev token, for a page on their own machine in Development. The relay attaches it to each call,
+    /// so the token is read fresh from the local config and never sits in a page or a build.
+    /// </summary>
+    private string? LocalDevToken(string? origin)
+    {
+        var token = _configuration["GeckoGraph:DevToken"]?.Trim();
+        if (string.IsNullOrEmpty(token) || !_environment.IsDevelopment()) return null;
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return null;
+        return uri.IsLoopback ? token : null;
+    }
 
     [HttpGet("{**path}")]
     [HttpPost("{**path}")]
@@ -95,6 +118,12 @@ public sealed class GeckoGraphRelayController : ControllerBase
         }
         // A same-origin GET often carries no Origin; GeckoGraph checks the page's origin, so name it.
         if (!upstream.Headers.Contains("Origin")) upstream.Headers.TryAddWithoutValidation("Origin", self);
+        var devToken = LocalDevToken(upstream.Headers.TryGetValues("Origin", out var origins) ? origins.FirstOrDefault() : null);
+        if (devToken is not null)
+        {
+            upstream.Headers.Remove("X-GeckoGraph-Dev-Token");
+            upstream.Headers.TryAddWithoutValidation("X-GeckoGraph-Dev-Token", devToken);
+        }
         // The MCP panel's calls carry its widget session as a bearer token. Forward that one kind only: the app's own
         // tokens never reach GeckoGraph.
         var panelAuth = Request.Headers.Authorization.ToString();
@@ -126,7 +155,23 @@ public sealed class GeckoGraphRelayController : ControllerBase
                 }
                 var target = _configuration["GeckoGraph:TargetOrigin"];
                 if (!string.IsNullOrWhiteSpace(target)) start["targetOrigin"] = new Uri(target).GetLeftPart(UriPartial.Authority);
+                if (devToken is not null) start["devWidgetToken"] = devToken;
                 body = start.ToJsonString();
+            }
+            else if (isAgent && devToken is not null && DevTokenBody.IsMatch(string.Join('/', segments)))
+            {
+                try
+                {
+                    if (JsonNode.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body) is JsonObject message)
+                    {
+                        message["devWidgetToken"] = devToken;
+                        body = message.ToJsonString();
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Not JSON: passed on as it came.
+                }
             }
             upstream.Content = new StringContent(body, Encoding.UTF8);
             upstream.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(

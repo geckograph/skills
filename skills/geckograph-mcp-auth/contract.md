@@ -10,6 +10,8 @@ A person sets these up in the GeckoGraph dashboard, on the **MCP** page. Only an
 - **An `mcp:provision` key** (Provisioning tab, "New provisioning key"). It is scoped to this one app and can be created only once the domain is verified. It is shown once. It is a server secret: put it in each environment's deploy config (app setting, secret store or pipeline variable), never in the repo and never in the browser. Every call to `/api/mcp/v1/apps/{app}/…` sends it as `Authorization: Bearer agfy_…`, from the app's server: a request with an `Origin` header is refused.
 - **The bridge environment.** The environment (staging, production) the bridge is registered and turned on in (Session bridge tab). Its **Headless MCP** switch is on, and it lists the app's page origins (both on the Environments page).
 
+**Locally, on the developer's personal environment** (SKILL.md, "Try it locally"), none of these: the app's server sends the developer's dev token in place of the `mcp:provision` key (`Authorization: Bearer <dev token>`, the same header) and names the personal environment, and `geckograph mcp local` writes both into its local config and registers the three URLs. GeckoGraph takes the dev token only for its own personal environment.
+
 ## 1. Making a link
 
 A link is made only by the app's backend, for the user signed in to the app. GeckoGraph can't make one alone.
@@ -45,7 +47,7 @@ Content-Type: application/json
 | Headless MCP is off in that environment | `403 {"error":"headless_off"}` | Turn on Headless MCP for the environment. |
 | the environment lists no origins | `409 {"error":"no_origins", "message": "…"}` | Add the app's origin to the environment on the Environments page. |
 | no such environment | `404 {"error":"not_found"}` | Name an environment of the app. |
-| a personal dev environment (`dev-…`), which serves only its owner | `409 {"error":"dev_environment", "message": "…"}` | Name a shared environment (preview, staging or production). |
+| a personal dev environment (`dev-…`) with an `mcp:provision` key | `409 {"error":"dev_environment", "message": "…"}` | Locally, send the dev token instead (`geckograph mcp local`); for the deployed app's end users, name a shared environment (preview, staging or production). |
 | a body field is missing or not allowed | `400 {"error":"invalid_request", "field": "…"}` | Send only `externalUserId` and `environment`. |
 | no key, or not a live key | `401 {"error":"invalid_key"}` | Send the `mcp:provision` key. |
 | not this app's `mcp:provision` key, or an `Origin` header | `403 {"error":"forbidden"}` | Use the key made for this app, from the server. |
@@ -218,7 +220,7 @@ The auth check shows `no_link_after_revoke` as not run (–) for a derived link:
 
 ## 3. The two endpoints GeckoGraph calls
 
-Both are `POST`, `application/json`, at URLs you register for one environment. Each registered URL (the session URL, the revoke URL and the panel URL) is `https`, has no query string, fragment or user info, and is on the app's registrable domain: the domain of the app's address in GeckoGraph (for `https://app.example.com`, any host under `example.com`). The dashboard refuses any other URL. Every call carries `Authorization: Bearer <JWT>`. Check it first ([verify-jwt.md](verify-jwt.md)); any failure answers `401` and nothing else happens.
+Both are `POST`, `application/json`, at URLs you register for one environment. Each registered URL (the session URL, the revoke URL and the panel URL) is `https`, has no query string, fragment or user info, and is on the app's registrable domain: the domain of the app's address in GeckoGraph (for `https://app.example.com`, any host under `example.com`). The dashboard refuses any other URL. On the developer's personal environment the URLs are instead `http` or `https` on `localhost` or `127.0.0.1`, registered with `geckograph mcp local`, and GeckoGraph calls them through `geckograph dev`'s tunnel. Every call carries `Authorization: Bearer <JWT>`. Check it first ([verify-jwt.md](verify-jwt.md)); any failure answers `401` and nothing else happens.
 
 ### `POST {sessionUrl}`
 
@@ -252,11 +254,12 @@ Content-Type: application/json
 }
 ```
 
-- `headers`: the request headers the frontend sends to the app's API with this session (name to value). `{}` when there are none. An `Authorization` header is `Scheme value`, such as `Bearer eyJ…`, with a space between the two. GeckoGraph drops an `Authorization` value without a scheme (a bare token).
+- `headers`: the request headers the frontend sends to the app's API with this session (name to value). `{}` when there are none. An `Authorization` header is `Scheme value`, such as `Bearer eyJ…`, with a space between the two, even when the app's frontend sends the bare token: GeckoGraph takes the value after the scheme as the session's token and sends it the way the graph's tools already send the app's token (bare, when that is what the frontend sends). So never change how the app's API reads its token for the bridge. GeckoGraph drops an `Authorization` value without a scheme.
 - `cookies`: the cookies the sign-in sets, each with `name` and `value`. `[]` when there are none. One of `headers` and `cookies` is not empty.
 - `expiresAt`: when the session ends, ISO 8601 in UTC. GeckoGraph asks again after that, or when a call comes back signed out.
 - GeckoGraph sends every header and one `Cookie` header holding every cookie (`name=value; name=value`) on each call it makes to the app's API with this session. It reads only each cookie's `name` and `value`: a `domain`, `path` or other attribute is ignored, and no cookie is held back by host. So return only the headers and cookies the app's API needs for this user, never cookies of other services.
 - Never return one of the user's open sessions, and never a longer-lived or wider session than the frontend gets.
+- When the app can't end one of its sessions early (a token it checks only by signature and expiry, with no session record), make the bridge's sessions short: about an hour, or the login's own lifetime when that is shorter: a revoked link then stops working when its last session expires. Mint them with the app's own token code, with only the lifetime changed.
 
 In every other case answer exactly this, with the same body whichever check failed:
 

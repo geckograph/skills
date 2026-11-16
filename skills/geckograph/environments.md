@@ -1,16 +1,16 @@
 # Shared environments: what each one uses, and who changes it
 
-Read this when the person asks which version Staging or Live uses, why one did not change, or how to make one change. Shared environments (Staging, Live, and any others the team adds) change only when a person acts in the GeckoGraph dashboard. No command, CI step or API key changes them, so never try. Your part is to read the state with the CLI and tell the person exactly where to click.
+Read this when the person asks which version Staging or Live uses, why one did not change, or how to make one change. A page gets its environment's version for the tools number its build carries (`data-tools`), so deploying a build with a new committed number is what ships that release to the environment's pages: there is no dashboard step for it, except that with Approval on, an internal environment waits until a person approves it. An environment that follows your code moves with each build on its own. Everything else that changes a shared environment (Staging, Live, and any others the team adds) is a person's act in the GeckoGraph dashboard: hold, resume following, approve, roll back. No command, CI step or API key does those, so never try. Your part is to read the state with the CLI and tell the person exactly where to click.
 
 ## Words
 
 - **Version**: a saved snapshot of what the chat assistant knows about the app: its features and the actions it can take. A new scan or a published edit makes a new one, such as v4.2.
-- **Published**: finished and ready for environments to use. A draft is not published, so no environment uses it yet.
-- **Tools number**: the number the app's code sends with the widget (`data-tools`) to say which actions that build was made with. Pages running older code get the version made for their number, so they keep working. Only `geckograph release` issues a new one.
+- **Published**: finished and ready for environments to use. A draft is not published, so no environment uses it yet. Saving a draft in the dashboard makes the environment it was opened for serve it to pages that send its tools number. Your personal environment, which the local widget uses, never gets another environment's draft: repairs are made and tried there, then `geckograph promote --env <env>` sends them to that environment's draft.
+- **Tools number**: the number the app's code sends with the widget (`data-tools`) to say which actions that build was made with. Pages running older code get the version made for their number, so they keep working. Only `geckograph release` issues a new one, and an environment's pages get it once a build that carries it is deployed there.
 
 ## The three states
 
-Every shared environment is in exactly one of these. An environment that follows your code is the exception: each page says which build it is, and the environment uses the version made for that build, so none of the three applies to it.
+Every shared environment is in exactly one of these for each tools number its pages report; the state decides which version of that number it uses. An environment that follows your code is the exception: each page says which build it is, and the environment uses the version made for that build, so none of the three applies to it.
 
 - **Following**: the environment switches to each new version automatically, as soon as it is published. Users' chat assistant uses the new version on their next message. New environments start here.
 - **Approval**: new versions wait until someone on the team approves them. Until then the chat assistant keeps using the version it has now. Approval is one switch for the whole app, not per environment.
@@ -32,9 +32,9 @@ The dashboard asks the person to confirm each of these on a customer-facing envi
 
 ## What you can do from the CLI
 
-- Read: `geckograph list_versions` shows each version and which shared environment uses it now (`on Live`, `on Staging`). `geckograph read_knowledge_graph`, `geckograph list_features`, `geckograph show_feature --id <id> --env live` and `geckograph show_tool --tool <name> --env live` show what a version holds.
+- Read: `geckograph list_versions` shows each version and the version each shared environment is set to (`on Live`, `on Staging`), then, under Served by tools number, what a page reporting each number gets there. `geckograph read_knowledge_graph`, `geckograph list_features`, `geckograph show_feature --id <id> --env live` and `geckograph show_tool --tool <name> --env live` show what a version holds.
 - Pick what you work on: `geckograph switch_app <slug>` and `geckograph switch_version <version>`.
-- Your personal environment, which only you use: `geckograph dev` and `geckograph relearn`.
+- Your personal environment, which only you use: `geckograph dev` (`--latest --from <env>` makes a new copy from what that environment serves, with your local edits), `geckograph relearn`, and repairs with `--env personal`, sent to a shared environment's draft with `geckograph promote --env <env>`.
 - A new tools number for changed code: `geckograph release --base <n>`, checked with `geckograph check --tools <n>`.
 - Edits to a shared environment land in its draft, and a person saves them in the dashboard: `geckograph edit_feature --env staging --input <json>`, `geckograph content --env staging --input <json>`, `geckograph accept_scan_proposal --id <id> --env staging`.
 - Checks: `geckograph validate --env staging --id <id>`, `geckograph list_validation_failures --env staging`, `geckograph rescan --env staging`.
@@ -47,8 +47,9 @@ The dashboard asks the person to confirm each of these on a customer-facing envi
 | Live to stop changing for now | Tell them: on the Environments page, on Live's card, press **Hold on vX**. |
 | Live back on an older version | Tell them: on Live's card, open History and press **Roll back to vX**. Live is then held there. |
 | New versions to wait for a person | Tell them: at the top of the Environments page, set **Approval for new versions** to On. |
-| A change in the code to reach Staging | Open the pull request. After it merges and the new version is published, Staging switches on its own if it is Following; otherwise tell them which button above applies. |
-| To know why Staging did not change | Run `geckograph list_versions`, then say which state it is in and which button changes it. |
+| A change in the code to reach Staging | Open the pull request. When the build with its committed tools number deploys to Staging, Staging's pages get that release; there is no dashboard step for it. An environment that follows the code moves with the build on its own. Only when Approval is on and the release waits, tell them to press **Review and approve** on Staging's card. |
+| A new release (tools number) on Development, Staging or Live | Deploy the build that carries the number to that environment. Nothing is done in the dashboard for it, except when Approval is on and the environment is not customer-facing: then the release waits, and the person presses **Review and approve** on that environment's card. Run `geckograph list_versions` and read Served by tools number to see what each number gets there. |
+| To know why Staging did not change | Run `geckograph list_versions`. If its pages report an older tools number, the build with the new number is not deployed there yet. Otherwise say which state it is in and which button changes it. |
 
 ## Messages the person may see
 

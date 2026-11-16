@@ -25,6 +25,8 @@
 //      GeckoGraphAgentUrl       default https://app.geckograph.com
 //      GeckoGraphDiscoveryUrl   default https://app.geckograph.com
 //      GeckoGraphTargetOrigin   the origin the agent calls the app's API at, when it is not this one
+//      GeckoGraphDevToken       on a developer's machine only: written by `geckograph widget_config` to the gitignored
+//                               Web.Local.config and renewed by `geckograph dev`. Never set it in a deploy.
 //
 // GeckoGraph's relearn never turns /api/geckograph/* into a tool, so it needs no geckograph.yml line.
 
@@ -32,6 +34,7 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
+using System.Text.RegularExpressions;
 using System.Net;
 using System.Text;
 using System.Web;
@@ -49,6 +52,9 @@ public class GeckoGraphRelayHandler : IHttpHandler
     {
         "Content-Encoding", "Content-Length", "Transfer-Encoding", "Connection", "Set-Cookie", "Content-Type",
     };
+
+    // The agent calls that carry the dev token in their body: a chat's start and its messages.
+    static readonly Regex DevTokenBody = new Regex("^/api/agent/conversations/(start|[^/]+/messages(/stream)?)$");
 
     public bool IsReusable { get { return true; } }
 
@@ -127,6 +133,8 @@ public class GeckoGraphRelayHandler : IHttpHandler
         }
         // A same-origin GET often carries no Origin; GeckoGraph checks the page's origin, so name it.
         if (string.IsNullOrEmpty(upstream.Headers["Origin"])) upstream.Headers["Origin"] = self;
+        var devToken = LocalDevToken(context, upstream.Headers["Origin"]);
+        if (devToken != null) upstream.Headers["X-GeckoGraph-Dev-Token"] = devToken;
         // The MCP panel's calls carry its widget session as a bearer token. Forward that one kind only: the app's own
         // tokens never reach GeckoGraph.
         var panelAuth = req.Headers["Authorization"];
@@ -138,13 +146,17 @@ public class GeckoGraphRelayHandler : IHttpHandler
             using (var reader = new StreamReader(req.InputStream, Encoding.UTF8)) body = reader.ReadToEnd();
             if (isAgent && sub == "/api/agent/conversations/start")
             {
-                body = WithSession(body, req.Headers["Cookie"]);
+                body = WithSession(body, req.Headers["Cookie"], devToken);
                 if (body == null)
                 {
                     Refuse(res, 400, "Conversation start is not JSON");
                     return;
                 }
                 if (string.IsNullOrEmpty(upstream.ContentType)) upstream.ContentType = "application/json";
+            }
+            else if (isAgent && devToken != null && DevTokenBody.IsMatch(sub))
+            {
+                body = WithDevToken(body, devToken);
             }
             var bytes = Encoding.UTF8.GetBytes(body);
             upstream.ContentLength = bytes.Length;
@@ -197,7 +209,7 @@ public class GeckoGraphRelayHandler : IHttpHandler
 
     // The conversation start, with the page user's cookie as auth.cookies (passed as is, so a signed session
     // cookie still verifies byte for byte) and the configured target origin. Null when the body is not JSON.
-    static string WithSession(string body, string cookie)
+    static string WithSession(string body, string cookie, string devToken)
     {
         var json = new JavaScriptSerializer();
         Dictionary<string, object> start;
@@ -224,7 +236,40 @@ public class GeckoGraphRelayHandler : IHttpHandler
         }
         var target = Setting("GeckoGraphTargetOrigin");
         if (target != null) start["targetOrigin"] = new Uri(target).GetLeftPart(UriPartial.Authority);
+        if (devToken != null) start["devWidgetToken"] = devToken;
         return json.Serialize(start);
+    }
+
+    // A chat message with the dev token added; the body as it came when it is not a JSON object.
+    static string WithDevToken(string body, string devToken)
+    {
+        var json = new JavaScriptSerializer();
+        try
+        {
+            var message = string.IsNullOrWhiteSpace(body) ? new Dictionary<string, object>() : json.Deserialize<Dictionary<string, object>>(body);
+            if (message == null) return body;
+            message["devWidgetToken"] = devToken;
+            return json.Serialize(message);
+        }
+        catch (ArgumentException)
+        {
+            return body;
+        }
+        catch (InvalidOperationException)
+        {
+            return body;
+        }
+    }
+
+    // The developer's dev token, for a page on their own machine in a debug build. The relay attaches it to each call,
+    // so the token is read fresh from Web.Local.config (re-read here: a change to that file restarts nothing) and never
+    // sits in a page or a build.
+    static string LocalDevToken(HttpContext context, string origin)
+    {
+        Uri uri;
+        if (!context.IsDebuggingEnabled || !Uri.TryCreate(origin, UriKind.Absolute, out uri) || !uri.IsLoopback) return null;
+        ConfigurationManager.RefreshSection("appSettings");
+        return Setting("GeckoGraphDevToken");
     }
 
     static string Setting(string name)
