@@ -1,5 +1,7 @@
 # Repairing a failing feature
 
+When the person says yes to repair, your first words, before any command, are a few plain lines: what repair is (GeckoGraph tests each feature on the app's test account; for a feature that failed, the fault is in GeckoGraph's copy of it, not their app, so their code won't change; for one that isn't proven yet, the cause isn't known yet, and the repair finds out); how it goes (you fix each one on their personal environment, test it twice, then send the ones that pass to <env>'s draft, which they review and save in the dashboard); and that it takes a while, several minutes per feature. Say this even when the repair shares a turn with other work, such as a commit. Then post one short line as each feature finishes (passed, or why not).
+
 ## Why the fix is in GeckoGraph, not the app
 A tool is a copy of a request the app's own screen sent during the scan, and the scan recorded the app's answer. The
 app handled that request. When a validation fails, the test sent something different from what the screen sent, or
@@ -37,7 +39,7 @@ is listed, with its evidence.
    applied (with the command that validates it on the draft) and what it skipped and why: the draft already changed that
    feature, the feature is not in the draft, or the edit no longer applies there. When your personal copy was made from
    another version than `<env>` serves, it says so first and carries no local pass. Validate each applied feature once
-   on `<env>`: the draft's save needs that pass. A switch-off (`suppress`) lands in the draft and takes effect when a
+   on `<env>`: the save is blocked only if a feature that passed before now fails, or hasn't been tested on the draft since the change; a feature that wasn't passing before never blocks it, and the dashboard lists it as still not passing. A switch-off (`suppress`) lands in the draft and takes effect when a
    person saves it; a `hide` stays on your personal environment. A feature without two passes on your personal environment
    is listed as not proven locally and stays there, still to send; when your local app cannot prove it, repair it on
    `<env>`'s draft directly and say why.
