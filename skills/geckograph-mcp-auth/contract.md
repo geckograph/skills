@@ -107,7 +107,7 @@ setInterval(async () => {
 
 ### 1b-2. The chat widget's MCP button
 
-When the app's pages already carry GeckoGraph's chat widget (its script tag), the widget has an MCP button that opens the same panel. The button is a GeckoGraph setting (Widget studio, MCP tab, "Show the MCP button", on by default): write no button and no panel of your own for it. It shows once the widget has a widget session, so on every page with the chat widget, hand it the same session and hook:
+When the app's pages already carry GeckoGraph's chat widget (its script tag), the widget has an MCP button that opens the same panel. The button is a GeckoGraph setting (Widget studio, MCP tab, "MCP icon", on by default; the Claude, ChatGPT and Grok icons beside it are "AI app icons", off by default): write no button and no panel of your own for it. It shows once the widget has a widget session, so on every page with the chat widget, hand it the same session and hook:
 
 ```ts
 const first = await newWidgetSession();
