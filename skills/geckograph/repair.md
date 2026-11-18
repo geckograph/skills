@@ -43,6 +43,14 @@ is listed, with its evidence.
    person saves it; a `hide` stays on your personal environment. A feature without two passes on your personal environment
    is listed as not proven locally and stays there, still to send; when your local app cannot prove it, repair it on
    `<env>`'s draft directly and say why.
+8. When a change turns out wrong, or a promoted feature can't be proven on the draft and the person wants it out, put
+   the feature back where the change is: `geckograph revert_feature --env personal --id <id>` for a repair not
+   promoted yet, `--env <env>` for one in `<env>`'s draft. Run it with `--dry-run`, show the person what it will undo,
+   and stop: end your turn and wait for their OK, even when they asked for the revert. Their ask is not the OK; the
+   preview is what they approve. Then run it without `--dry-run`. Revert only what they asked for: never revert another
+   copy (personal or a draft) on your own. Don't undo it edit by edit. When it says a tool is shared, ask the person
+   whether to put the tool back for every feature that uses it (`--tools restore`) or keep it (`--tools keep`). A
+   revert drops the repair: never use it only to get the draft saved.
 
 ## Edit kinds
 Each `geckograph edit_feature --env <env> --input '<json>'` takes exactly one of these. A key a kind does not list is refused, and a refusal names the field and prints the shape. Optional keys: `goalExamples`, `title`, `field` on `check`, `type` and `in` on `tool_input` (`type` is needed with `add`), `on` on `ui_only` (`false` gives the feature back to the agent). Tool wording goes through `geckograph content --env <env> --input '{"tool":"<tool>","label":"<label>","description":"<text>","confirm":true}'`.
