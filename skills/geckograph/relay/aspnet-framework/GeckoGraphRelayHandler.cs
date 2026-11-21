@@ -32,12 +32,15 @@
 
 using System;
 using System.Collections.Generic;
-using System.Configuration;
 using System.IO;
+using System.Xml;
+#if !GECKOGRAPH_RELAY_TESTS
+using System.Configuration;
 using System.Text.RegularExpressions;
 using System.Net;
 using System.Text;
 using System.Web;
+using System.Web.Hosting;
 using System.Web.Script.Serialization;
 
 public class GeckoGraphRelayHandler : IHttpHandler
@@ -262,14 +265,26 @@ public class GeckoGraphRelayHandler : IHttpHandler
     }
 
     // The developer's dev token, for a page on their own machine in a debug build. The relay attaches it to each call,
-    // so the token is read fresh from Web.Local.config (re-read here: a change to that file restarts nothing) and never
-    // sits in a page or a build.
+    // so it never sits in a page or a build.
+    //
+    // READ FROM THE FILE ITSELF. `geckograph dev` renews the token every few hours and rewrites Web.Local.config, which
+    // Web.config names in <appSettings file="Web.Local.config">. ASP.NET does not restart for a change to that file, and
+    // ConfigurationManager.RefreshSection("appSettings") does not re-read it either (checked under IIS Express: a replaced
+    // token kept answering with the old one), so the relay kept the token it started with until the server restarted.
+    // The relay now reads the file named there, again whenever its modification time changes.
+    static readonly GeckoGraphFileCache LocalFiles = new GeckoGraphFileCache(
+        delegate(string path) { return File.Exists(path) ? (DateTime?)File.GetLastWriteTimeUtc(path) : null; },
+        File.ReadAllText);
+
     static string LocalDevToken(HttpContext context, string origin)
     {
         Uri uri;
         if (!context.IsDebuggingEnabled || !Uri.TryCreate(origin, UriKind.Absolute, out uri) || !uri.IsLoopback) return null;
-        ConfigurationManager.RefreshSection("appSettings");
-        return Setting("GeckoGraphDevToken");
+        var webConfig = HostingEnvironment.MapPath("~/Web.config");
+        var fromFile = webConfig == null ? null
+            : GeckoGraphLocalSettings.FromAppSettingsFile(LocalFiles, webConfig, "GeckoGraphDevToken");
+        // Set in Web.config itself instead: a change there restarts the app, so the loaded value is current.
+        return fromFile ?? Setting("GeckoGraphDevToken");
     }
 
     static string Setting(string name)
@@ -283,5 +298,110 @@ public class GeckoGraphRelayHandler : IHttpHandler
         res.StatusCode = status;
         res.ContentType = "text/plain";
         res.Write(message);
+    }
+}
+#endif
+
+// The file a setting lives in, read again whenever its modification time changes. Thread-safe; no System.Web.
+public sealed class GeckoGraphFileCache
+{
+    readonly Func<string, DateTime?> modified;
+    readonly Func<string, string> read;
+    readonly Dictionary<string, KeyValuePair<DateTime, string>> files =
+        new Dictionary<string, KeyValuePair<DateTime, string>>(StringComparer.OrdinalIgnoreCase);
+    readonly object gate = new object();
+
+    public GeckoGraphFileCache(Func<string, DateTime?> modified, Func<string, string> read)
+    {
+        this.modified = modified;
+        this.read = read;
+    }
+
+    // The file's text, or null when it does not exist or cannot be read, or the platform refuses its path (bad characters,
+    // a bad format): never an error.
+    public string Text(string path)
+    {
+        DateTime? stamp;
+        try { stamp = modified(path); } catch (IOException) { return null; } catch (UnauthorizedAccessException) { return null; } catch (ArgumentException) { return null; } catch (NotSupportedException) { return null; }
+        if (stamp == null) return null;
+        lock (gate)
+        {
+            KeyValuePair<DateTime, string> cached;
+            if (files.TryGetValue(path, out cached) && cached.Key == stamp.Value) return cached.Value;
+            string text;
+            try { text = read(path); } catch (IOException) { return null; } catch (UnauthorizedAccessException) { return null; } catch (ArgumentException) { return null; } catch (NotSupportedException) { return null; }
+            files[path] = new KeyValuePair<DateTime, string>(stamp.Value, text);
+            return text;
+        }
+    }
+}
+
+// Pure: the relay's reads of Web.config and the appSettings file it names.
+public static class GeckoGraphLocalSettings
+{
+    // A setting from the file Web.config names in <appSettings file="...">, resolved beside Web.config; null when there
+    // is no such file, or it does not hold the setting.
+    public static string FromAppSettingsFile(GeckoGraphFileCache files, string webConfigPath, string key)
+    {
+        var file = AppSettingsFile(files.Text(webConfigPath));
+        if (file == null) return null;
+        string path;
+        try
+        {
+            var dir = Path.GetDirectoryName(webConfigPath) ?? "";
+            path = Path.GetFullPath(Path.Combine(dir, file));
+        }
+        // A file attribute that is no path (invalid characters, a bad format): nothing from the file, so the caller falls back
+        // to Web.config's own setting instead of failing the request.
+        catch (ArgumentException) { return null; }
+        catch (NotSupportedException) { return null; }
+        catch (PathTooLongException) { return null; }
+        return AppSetting(files.Text(path), key);
+    }
+
+    // The file attribute of Web.config's <configuration><appSettings>, or null.
+    public static string AppSettingsFile(string webConfigXml)
+    {
+        var root = Load(webConfigXml);
+        if (root == null || root.Name != "configuration") return null;
+        var section = root["appSettings"];
+        var file = section == null ? null : section.GetAttribute("file");
+        return string.IsNullOrWhiteSpace(file) ? null : file.Trim();
+    }
+
+    // The value of <add key="..." value="..." /> in an appSettings document (an appSettings file's root, or a Web.config's
+    // <appSettings> section), the last one winning as in ASP.NET, or null. A <remove> or <clear /> after it removes it.
+    public static string AppSetting(string xml, string key)
+    {
+        var root = Load(xml);
+        if (root == null) return null;
+        var section = root.Name == "appSettings" ? root : root["appSettings"];
+        if (section == null) return null;
+        string value = null;
+        foreach (XmlNode node in section.ChildNodes)
+        {
+            var element = node as XmlElement;
+            if (element == null) continue;
+            if (element.Name == "clear") value = null;
+            else if (element.Name == "remove" && element.GetAttribute("key") == key) value = null;
+            else if (element.Name == "add" && element.GetAttribute("key") == key) value = element.GetAttribute("value");
+        }
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    static XmlElement Load(string xml)
+    {
+        if (string.IsNullOrWhiteSpace(xml)) return null;
+        try
+        {
+            var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
+            var doc = new XmlDocument { XmlResolver = null };
+            using (var reader = XmlReader.Create(new StringReader(xml), settings)) doc.Load(reader);
+            return doc.DocumentElement;
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
     }
 }
