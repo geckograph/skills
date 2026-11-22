@@ -63,7 +63,20 @@ The panel is in GeckoGraph's embed script, the same script as the chat widget. G
 
 The script sets `window.GeckoGraph` (also reachable as `window.AgentifyEmbed`). With a `data-app` attribute, the tag also starts the chat widget. Without one, it starts no chat (it logs a "Missing required data-app attribute" warning in the console) and only provides `GeckoGraph.mountMcpPanel`. When the page already has the chat widget's tag, use that one: don't load the script twice.
 
-Mount the panel once the script has loaded:
+Mount the panel once the script has loaded, naming the app's two routes (1a and 1c), on the page's own origin. The panel gets its widget session from the first, refreshes it before it expires (it lasts 1 hour), and posts each link request to the second:
+
+```ts
+GeckoGraph.mountMcpPanel('#geckograph-mcp', {
+  discoveryUrl: 'https://app.geckograph.com',
+  sessionUrl: '/api/geckograph/widget-session',   // 1a
+  linkUrl: '/api/geckograph/bridge-links',        // 1c: posts { request } with the page's cookies
+  // When the routes check a CSRF token: csrfHeader: 'X-CSRF-Token', csrfFrom: 'meta:csrf-token' (or 'cookie:<name>')
+});
+```
+
+Each request is a `POST` with `Content-Type: application/json`, the page's cookies, and the bearer token the page gave `GeckoGraph.setAuth` (when it gave one). A redirect counts as signed out. The panel's element carries `data-geckograph-mcp`: `on`, or `off:<reason>` (SKILL.md, "Check it").
+
+When the routes need a header these options can't send, or are on another origin, pass the session and hook yourself and refresh it:
 
 ```ts
 async function newWidgetSession(): Promise<{ widgetSession: string; expiresAt: string }> {
@@ -102,21 +115,25 @@ setInterval(async () => {
 - When a signed-in user turns the bridge on in the panel (or at "Continue with {app}", or when a developer confirms an auth check), the panel calls `onBridgeLinkRequest(request)`.
 - The callback resolves when the backend stored the link, and throws (rejects) when it did not.
 - The link request lasts 5 minutes and works once.
-- The page the panel is mounted on is the **panel URL** you register. GeckoGraph opens it with its own query parameters (`gg_authorize` for "Continue with {app}", `gg_check` for an auth check). Keep them, also through the app's login redirect, so a signed-out user signs in and comes back to the same URL.
+- The page the panel is mounted on is the **panel URL** you register. GeckoGraph opens it with its own query parameters (`gg_authorize` for "Continue with {app}", `gg_check` for an auth check). Keep them, also through the app's login redirect, so a signed-out user signs in and comes back to the same URL. For a hash-routed app, register the panel URL with its hash route (`/portal/#/mcp`); GeckoGraph opens `/portal/?gg_authorize=…#/mcp`. The panel reads GeckoGraph's parameters only from the query before the `#`, so the login round trip must keep them there and never move them into the hash.
 - Use the app's usual CSRF protection on both backend routes, as on any state-changing route.
 
 ### 1b-2. The chat widget's MCP button
 
-When the app's pages already carry GeckoGraph's chat widget (its script tag), the widget has an MCP button that opens the same panel. The button is a GeckoGraph setting (Widget studio, MCP tab, "MCP icon", on by default; the Claude, ChatGPT and Grok icons beside it are "AI app icons", off by default): write no button and no panel of your own for it. It shows once the widget has a widget session, so on every page with the chat widget, hand it the same session and hook:
+When the app's pages already carry GeckoGraph's chat widget (its script tag), the widget has an MCP button that opens the same panel. The button is a GeckoGraph setting (Widget studio, MCP tab, "MCP icon", on by default; the Claude, ChatGPT and Grok icons beside it are "AI app icons", off by default): write no button and no panel of your own for it. It shows once the widget has a widget session. Name the app's two routes on the widget's script tag, and the widget gets it itself:
 
-```ts
-const first = await newWidgetSession();
-GeckoGraph.setMcpWidgetSession(first.widgetSession, { onBridgeLinkRequest });   // the same hook as mountMcpPanel's
-// Refresh it before it ends, as for the panel: GeckoGraph.setMcpWidgetSession(next.widgetSession)
+```html
+<script src="https://app.geckograph.com/geckograph-embed.min.js" data-app="…" data-env-key="…"
+        data-mcp-session-url="/api/geckograph/widget-session"
+        data-mcp-link-url="/api/geckograph/bridge-links"></script>
+<!-- When the routes check a CSRF token: data-mcp-csrf-header="X-CSRF-Token" data-mcp-csrf-from="meta:csrf-token" (or cookie:<name>) -->
 ```
 
-- Call it after the widget's script has loaded (`window.GeckoGraph` is set). Pass `onBridgeLinkRequest` here: a script tag can't.
-- Only for a signed-in user. A page with no signed-in user hands it no session, and the widget shows no MCP button.
+- Both URLs are on the page's own origin (scheme, host and port); one on another origin is ignored. Requests are as for the panel (1b): `POST`, JSON, the page's cookies, the `setAuth` bearer token, the CSRF header when named, no redirect followed.
+- The widget fetches the session at load, refreshes it about 5 minutes before it expires (and when a hidden tab comes back past that), fetches it again on each `GeckoGraph.setAuth(...)` with a credential and each time the MCP screen opens (so a user or tenant switch the page never reported can't keep the old session), and ends it on `GeckoGraph.setAuth(null)` (sign-out).
+- A signed-out page (the route answers `401`, or redirects) gets no session, and the widget shows no MCP button.
+- Why the button is off: `#geckograph-widget[data-geckograph-mcp]` reads `on` or `off:<reason>`, and `GeckoGraph.mcpStatus()` returns the same (SKILL.md, "Check it").
+- The JavaScript API stays, and wins over the attributes: `GeckoGraph.setMcpWidgetSession(widgetSession, { onBridgeLinkRequest })`, refreshed before it expires. Use it only when the routes need a header the attributes can't send, or are on another origin.
 - This is besides the panel page of 1b, not instead of it: GeckoGraph opens the panel URL for "Continue with {app}" and for auth checks.
 
 ### 1c. The backend redeems it
@@ -220,7 +237,7 @@ The auth check shows `no_link_after_revoke` as not run (–) for a derived link:
 
 ## 3. The two endpoints GeckoGraph calls
 
-Both are `POST`, `application/json`, at URLs you register for one environment. Each registered URL (the session URL, the revoke URL and the panel URL) is `https`, has no query string, fragment or user info, and is on the app's registrable domain: the domain of the app's address in GeckoGraph (for `https://app.example.com`, any host under `example.com`). The dashboard refuses any other URL. On the developer's personal environment the URLs are instead `http` or `https` on `localhost` or `127.0.0.1`, registered with `geckograph mcp local`, and GeckoGraph calls them through `geckograph dev`'s tunnel. Every call carries `Authorization: Bearer <JWT>`. Check it first ([verify-jwt.md](verify-jwt.md)); any failure answers `401` and nothing else happens.
+Both are `POST`, `application/json`, at URLs you register for one environment. Each registered URL (the session URL, the revoke URL and the panel URL) is `https`, has no query string or user info, and is on the app's registrable domain. Only the panel URL may have a fragment: a hash-routed app's page (`https://app.example.com/portal/#/mcp`); GeckoGraph puts its query before it: the domain of the app's address in GeckoGraph (for `https://app.example.com`, any host under `example.com`). The dashboard refuses any other URL. On the developer's personal environment the URLs are instead `http` or `https` on `localhost` or `127.0.0.1`, registered with `geckograph mcp local`, and GeckoGraph calls them through `geckograph dev`'s tunnel. Every call carries `Authorization: Bearer <JWT>`. Check it first ([verify-jwt.md](verify-jwt.md)); any failure answers `401` and nothing else happens.
 
 ### `POST {sessionUrl}`
 
@@ -259,7 +276,7 @@ Content-Type: application/json
 - `expiresAt`: when the session ends, ISO 8601 in UTC. GeckoGraph asks again after that, or when a call comes back signed out.
 - GeckoGraph sends every header and one `Cookie` header holding every cookie (`name=value; name=value`) on each call it makes to the app's API with this session. It reads only each cookie's `name` and `value`: a `domain`, `path` or other attribute is ignored, and no cookie is held back by host. So return only the headers and cookies the app's API needs for this user, never cookies of other services.
 - Never return one of the user's open sessions, and never a longer-lived or wider session than the frontend gets.
-- When the app can't end one of its sessions early (a token it checks only by signature and expiry, with no session record), make the bridge's sessions short: about an hour, or the login's own lifetime when that is shorter: a revoked link then stops working when its last session expires. Mint them with the app's own token code, with only the lifetime changed.
+- When the app can't end one of its sessions early (a signed token or signed cookie it checks only by signature and expiry, with no session record), make the bridge's sessions short: about an hour, or the login's own lifetime when that is shorter: a revoked link then stops working when its last session expires. Make them with the app's own session code, with only the lifetime changed.
 
 In every other case answer exactly this, with the same body whichever check failed:
 
@@ -314,7 +331,7 @@ DELETE FROM geckograph_bridge_links WHERE link_id = $1 AND user_id = $2
 - GeckoGraph calls it when the user disconnects, when a new link of theirs replaces the old one, and when an auth check ends. It deletes its side of the link whether or not this call succeeds.
 - The app may end a link on its own by deleting the record or marking it revoked; the next `sessionUrl` call answers `no_link`.
 - With derived secrets (2b) there is no row: answer `204` after the JWT check.
-- Don't end the user's own open app sessions here: a revoke ends GeckoGraph's access, not the user's. Do end the sessions the bridge made for that link (for example, mark its bridge session records ended), so none stays usable after the revoke.
+- Don't end the user's own open app sessions here: a revoke ends GeckoGraph's access, not the user's. When the app keeps session records, do end the sessions the bridge made for that link (for example, mark its bridge session records ended), so none stays usable after the revoke. When it keeps none, the bridge's sessions are short (`sessionUrl`, above), and the link stops working when its last one expires.
 
 ## 4. The signed JWT, in short
 

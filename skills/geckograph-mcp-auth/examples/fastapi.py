@@ -35,8 +35,8 @@ def no_link() -> JSONResponse:
     return JSONResponse({"error": "no_link"}, status_code=404)
 
 
-# 0. The panel page asks for a widget session for the signed-in user, and passes it to GeckoGraph.mountMcpPanel.
-#    It lasts an hour: the page calls this again before expiresAt and passes the new one to panel.setWidgetSession.
+# 0. The widget session route. The panel (GeckoGraph.mountMcpPanel with sessionUrl) and the chat widget (data-mcp-session-url
+#    on its script tag) call it themselves, with the page's own session, and again before expiresAt (it lasts an hour).
 #    Each user's session is reused until 5 minutes before it ends: the provision key's limit is shared by every user.
 #    (One process here; with several workers, keep it in the app's shared cache instead.)
 _widget_sessions: dict[str, dict] = {}
