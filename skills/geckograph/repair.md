@@ -60,7 +60,10 @@ is listed, with its evidence.
    at all, and features that share an edit (a tool's wording, a moved tool) go together. It prints, per group of features,
    what it sent (with the command that validates it on the draft) or the one reason it did not send it: a feature not
    proven yet (with the command that validates it), the draft already changed that feature, or an edit that can never go
-   as it is (its feature or rule is not in the draft, or the edit no longer applies there), with the way out. When your personal copy was made from
+   as it is (its feature or rule is not in the draft, or the edit no longer applies there), with the way out; or a feature
+   or tool built from `geckograph.yml` that `<env>` does not have yet, which waits for a release with its line to be
+   deployed there (promote again after that deploy). `--dry-run` says all this and changes nothing: show it to the
+   person and ask before you promote. When your personal copy was made from
    another version than `<env>` serves, it says so first and carries no local pass. Validate each applied feature once
    on `<env>`: the save is blocked only if a feature that passed before now fails, or hasn't been tested on the draft since the change; a feature that wasn't passing before never blocks it, and the dashboard lists it as still not passing. A switch-off (`suppress`) lands in the draft and takes effect when a
    person saves it; a `hide` stays on your personal environment. A feature without two passes on your personal environment
