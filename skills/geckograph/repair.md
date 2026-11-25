@@ -79,13 +79,14 @@ is listed, with its evidence.
    revert drops the repair: never use it only to get the draft saved.
 
 ## Edit kinds
-Each `geckograph edit_feature --env <env> --input '<json>'` takes exactly one of these. A key a kind does not list is refused, and a refusal names the field and prints the shape. Optional keys: `goalExamples`, `title`, `field` on `check`, `type` and `in` on `tool_input` (`type` is needed with `add`), `on` on `ui_only` (`false` gives the feature back to the agent). Tool wording goes through `geckograph content --env <env> --input '{"tool":"<tool>","label":"<label>","description":"<text>","confirm":true}'`.
+Each `geckograph edit_feature --env <env> --input '<json>'` takes exactly one of these. A key a kind does not list is refused, and a refusal names the field and prints the shape. Optional keys: `goalExamples`, `title`, `field` on `check`, `type` and `in` on `tool_input` (`type` is needed with `add`), `on` on `ui_only` (`false` gives the feature back to the agent). A new name (`rewrite` with `name`, `rename_area`, `update_module --name`) is an organization owner's or admin's on a shared environment; `rename_area` works on a shared environment only. Tool wording goes through `geckograph content --env <env> --input '{"tool":"<tool>","label":"<label>","description":"<text>","confirm":true}'`.
 - `{"kind":"bind","id":"<feature id>","tool":"<tool>","as":"own|helper|none"}`
 - `{"kind":"move_tool","id":"<feature id>","tool":"<tool>","name":"<new feature name>","description":"<text>","goalExamples":["<ask>"]}`
 - `{"kind":"input_source","id":"<feature id>","input":"<input>","tool":"<list tool>","field":"<field in its answer>"}`
 - `{"kind":"tool_input","id":"<feature id>","tool":"<tool>","input":"<input>","change":"optional|user|add","type":"string|number|boolean","in":"body|query"}`
 - `{"kind":"check","id":"<feature id>","tool":"<read tool>","field":"<field>"}`
 - `{"kind":"rewrite","id":"<feature id>","name":"<name>","description":"<text>","goalExamples":["<ask>"]}`
+- `{"kind":"rename_area","id":"<id of a feature in the area>","name":"<new area name>"}`
 - `{"kind":"rule","id":"<feature id>","op":"add|update|delete","ruleId":"<rule id, for update and delete>","title":"<title>","text":"<text, for add and update>"}`
 - `{"kind":"test_hint","id":"<feature id>","text":"<text>"}`
 - `{"kind":"ui_only","id":"<feature id>","reason":"<why>","on":true|false}`

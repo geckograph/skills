@@ -10,7 +10,7 @@ A person sets these up in the GeckoGraph dashboard, on the **MCP** page. Only an
 - **An `mcp:provision` key** (Provisioning tab, "New provisioning key"). It is scoped to this one app and can be created only once the domain is verified. It is shown once. It is a server secret: put it in each environment's deploy config (app setting, secret store or pipeline variable), never in the repo and never in the browser. Every call to `/api/mcp/v1/apps/{app}/…` sends it as `Authorization: Bearer agfy_…`, from the app's server: a request with an `Origin` header is refused.
 - **The bridge environment.** The environment (staging, production) the bridge is registered and turned on in (Session bridge tab). Its **Headless MCP** switch is on, and it lists the app's page origins (both on the Environments page).
 
-**Locally, on the developer's personal environment** (SKILL.md, "Try it locally"), none of these: the app's server sends the developer's dev token in place of the `mcp:provision` key (`Authorization: Bearer <dev token>`, the same header) and names the personal environment, and `geckograph mcp local` writes both into its local config and registers the three URLs. GeckoGraph takes the dev token only for its own personal environment.
+**Locally, on the developer's personal environment** (SKILL.md, "Try it locally"), none of these: the app's server sends the local key `geckograph mcp local` writes in place of the `mcp:provision` key (`Authorization: Bearer <local key>`, the same header) and names the personal environment; that command writes both into its local config and registers the three URLs. GeckoGraph takes the local key only for its own personal environment. It lasts 90 days and never changes while the app runs.
 
 ## 1. Making a link
 
@@ -47,9 +47,9 @@ Content-Type: application/json
 | Headless MCP is off in that environment | `403 {"error":"headless_off"}` | Turn on Headless MCP for the environment. |
 | the environment lists no origins | `409 {"error":"no_origins", "message": "…"}` | Add the app's origin to the environment on the Environments page. |
 | no such environment | `404 {"error":"not_found"}` | Name an environment of the app. |
-| a personal dev environment (`dev-…`) with an `mcp:provision` key | `409 {"error":"dev_environment", "message": "…"}` | Locally, send the dev token instead (`geckograph mcp local`); for the deployed app's end users, name a shared environment (preview, staging or production). |
+| a personal dev environment (`dev-…`) with an `mcp:provision` key | `409 {"error":"dev_environment", "message": "…"}` | Locally, send the local key instead (`geckograph mcp local`); for the deployed app's end users, name a shared environment (preview, staging or production). |
 | a body field is missing or not allowed | `400 {"error":"invalid_request", "field": "…"}` | Send only `externalUserId` and `environment`. |
-| no key, or not a live key | `401 {"error":"invalid_key"}` | Send the `mcp:provision` key. |
+| no key, or not a live key | `401 {"error":"invalid_key"}`, with a `message` when it is a local key that expired or no longer matches its owner, or an expired dev token | Send the `mcp:provision` key; locally, run `geckograph mcp local --dir <the server app's folder>` again and restart the app. |
 | not this app's `mcp:provision` key, or an `Origin` header | `403 {"error":"forbidden"}` | Use the key made for this app, from the server. |
 | more than 10 a minute for one end user, or 600 for one key | `429 {"error":"rate_limited"}` | Reuse each user's widget session until shortly before it expires (above). |
 
