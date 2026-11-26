@@ -20,10 +20,15 @@
 // public origin; otherwise the same-origin check below refuses every POST.
 // GeckoGraph's relearn never turns /api/geckograph/* into a tool, so it needs no geckograph.yml line.
 
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 
 [ApiController]
 [Route("api/geckograph")]
@@ -58,17 +63,81 @@ public sealed class GeckoGraphRelayController : ControllerBase
         _environment = environment;
     }
 
+    /// <summary>Headers only a proxy or tunnel in front of the app adds: present, the caller is not on this machine.</summary>
+    private static readonly string[] ProxyHeaders =
+    {
+        "Forwarded", "Via", "X-Real-IP", "X-Forwarded-Server", "True-Client-IP", "CF-Connecting-IP", "CF-Ray",
+    };
+
     /// <summary>
     /// The developer's dev token, for a page on their own machine in Development. The relay attaches it to each call,
-    /// so the token is read fresh from the local config and never sits in a page or a build.
+    /// so the token is read fresh from the local config and never sits in a page or a build. Only for a request the
+    /// browser sent from a loopback page straight to this server: never through a tunnel or proxy, whatever Host says.
     /// </summary>
-    private string? LocalDevToken(string? origin)
+    private string? LocalDevToken()
     {
         var token = _configuration["GeckoGraph:DevToken"]?.Trim();
         if (string.IsNullOrEmpty(token) || !_environment.IsDevelopment()) return null;
-        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return null;
+        // The connection itself comes from this machine, so another machine on the network never gets the token.
+        var peer = HttpContext.Connection.RemoteIpAddress;
+        if (peer is null || !IsLoopback(peer)) return null;
+        if (ViaProxy()) return null;
+        if (!Uri.TryCreate(BrowserOrigin(), UriKind.Absolute, out var uri)) return null;
         return uri.IsLoopback ? token : null;
     }
+
+    /// <summary>
+    /// The page's origin as the browser itself sent it: the Origin header, or, on a GET (browsers send no Origin on a
+    /// same-origin GET), the origin of its Referer. Never an origin worked out from the Host header, which a tunnel can
+    /// rewrite to localhost.
+    /// </summary>
+    private string? BrowserOrigin()
+    {
+        var origin = Request.Headers.Origin.ToString();
+        if (origin.Length > 0) return origin;
+        if (!HttpMethods.IsGet(Request.Method) && !HttpMethods.IsHead(Request.Method)) return null;
+        return Uri.TryCreate(Request.Headers.Referer.ToString(), UriKind.Absolute, out var referer)
+            ? referer.GetLeftPart(UriPartial.Authority)
+            : null;
+    }
+
+    /// <summary>
+    /// Whether a proxy or tunnel passed the request on. X-Forwarded-For and X-Forwarded-Host (and the X-Original-
+    /// copies the forwarded-headers middleware leaves) count only when they name a host or address off this machine: a
+    /// local front server such as IIS out of process names this machine, while a tunnel that rewrites Host to localhost
+    /// still names its public host or its caller.
+    /// </summary>
+    private bool ViaProxy()
+    {
+        if (ProxyHeaders.Any(Request.Headers.ContainsKey)) return true;
+        foreach (var name in new[] { "X-Forwarded-Host", "X-Original-Host", "X-Forwarded-For", "X-Original-For" })
+        {
+            var value = Request.Headers[name].ToString();
+            if (value.Length > 0 && value.Split(',').Any(a => !IsLoopbackAddress(a))) return true;
+        }
+        return false;
+    }
+
+    /// <summary>A host or address as a forwarding header writes it (<c>localhost:5000</c>, <c>127.0.0.1</c>, <c>[::1]:5000</c>) is loopback.</summary>
+    private static bool IsLoopbackAddress(string entry)
+    {
+        var a = entry.Trim();
+        if (a.StartsWith('['))
+        {
+            var end = a.IndexOf(']');
+            a = end > 0 ? a[1..end] : a;
+        }
+        else if (a.Count(c => c == ':') == 1)
+        {
+            a = a[..a.IndexOf(':')];
+        }
+        if (string.Equals(a, "localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        return IPAddress.TryParse(a, out var ip) && IsLoopback(ip);
+    }
+
+    /// <summary>Loopback, also written as IPv6 (<c>::ffff:127.0.0.1</c>, which a dual-mode socket reports for IPv4).</summary>
+    private static bool IsLoopback(IPAddress ip) =>
+        IPAddress.IsLoopback(ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip);
 
     [HttpGet("{**path}")]
     [HttpPost("{**path}")]
@@ -87,6 +156,12 @@ public sealed class GeckoGraphRelayController : ControllerBase
             if (foreign)
             {
                 await Refuse(403, "Cross-origin request rejected", cancellationToken);
+                return;
+            }
+            // A browser names where a state-changing call comes from; a call that says neither is not from this app's pages.
+            if (origin.Length == 0 && site.Length == 0)
+            {
+                await Refuse(403, "Request without Origin or Sec-Fetch-Site rejected", cancellationToken);
                 return;
             }
         }
@@ -118,7 +193,7 @@ public sealed class GeckoGraphRelayController : ControllerBase
         }
         // A same-origin GET often carries no Origin; GeckoGraph checks the page's origin, so name it.
         if (!upstream.Headers.Contains("Origin")) upstream.Headers.TryAddWithoutValidation("Origin", self);
-        var devToken = LocalDevToken(upstream.Headers.TryGetValues("Origin", out var origins) ? origins.FirstOrDefault() : null);
+        var devToken = LocalDevToken();
         if (devToken is not null)
         {
             upstream.Headers.Remove("X-GeckoGraph-Dev-Token");

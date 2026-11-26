@@ -40,19 +40,77 @@ const STRIP_RESPONSE_HEADERS = new Set(["content-encoding", "content-length", "t
 /** The agent calls that carry the dev token in their body: a chat's start and its messages. */
 const DEV_TOKEN_BODY = /^\/api\/agent\/conversations\/(start|[^/]+\/messages(\/stream)?)$/;
 
+/** Headers that only a proxy or tunnel in front of the app adds: their presence means the caller is not on this machine. */
+const PROXY_HEADERS = [
+  "forwarded",
+  "via",
+  "x-real-ip",
+  "x-forwarded-server",
+  "true-client-ip",
+  "cf-connecting-ip",
+  "cf-ray",
+];
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** A host or address as a forwarding header writes it (`localhost:3000`, `127.0.0.1`, `::1`, `[::1]:3000`) is loopback. */
+function isLoopbackAddress(entry: string): boolean {
+  let a = entry.trim().toLowerCase();
+  if (a.startsWith("[")) a = a.slice(1, a.indexOf("]") > 0 ? a.indexOf("]") : undefined);
+  else if (a.split(":").length === 2) a = a.slice(0, a.indexOf(":"));
+  return a === "localhost" || a === "::1" || /^(::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a);
+}
+
+function isLoopbackOrigin(value: string | null): boolean {
+  if (!value) return false;
+  try {
+    return LOOPBACK_HOSTS.has(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a proxy or tunnel passed the request on. Next.js itself sets X-Forwarded-Host to the Host header and
+ * X-Forwarded-For to the socket's address when they are missing (and a local rewrite proxy sends its own loopback
+ * host), so those, and the X-Original- copies a forwarded-headers step leaves, count only when they name a host or
+ * address off this machine: a tunnel that rewrites Host to localhost still names its public host or its caller there.
+ */
+function viaProxy(req: NextRequest): boolean {
+  if (PROXY_HEADERS.some((name) => req.headers.has(name))) return true;
+  return ["x-forwarded-host", "x-forwarded-for", "x-original-host", "x-original-for"].some((name) => {
+    const value = req.headers.get(name);
+    return !!value && value.split(",").some((a) => !isLoopbackAddress(a));
+  });
+}
+
+/**
+ * The page's origin as the browser itself sent it: the Origin header, or, on a GET (browsers send no Origin on a
+ * same-origin GET), the origin of its Referer. Never an origin this route works out from the Host header, which a
+ * tunnel can rewrite to localhost.
+ */
+function browserOrigin(req: NextRequest): string | null {
+  const origin = req.headers.get("origin");
+  if (origin) return origin;
+  if (req.method !== "GET" && req.method !== "HEAD") return null;
+  try {
+    const referer = req.headers.get("referer");
+    return referer ? new URL(referer).origin : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The developer's dev token, for a page on their own machine in development. The relay attaches it to each call, so
- * the token is read fresh from the local config and never sits in a page or a build.
+ * the token is read fresh from the local config and never sits in a page or a build. Only for a request the browser
+ * sent from a loopback page straight to this server: never through a tunnel or proxy, whatever Host says.
  */
-function localDevToken(origin: string | null): string | undefined {
+function localDevToken(req: NextRequest): string | undefined {
   const token = process.env.GECKOGRAPH_DEV_TOKEN?.trim();
-  if (!token || process.env.NODE_ENV === "production" || !origin) return undefined;
-  try {
-    const host = new URL(origin).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "[::1]" ? token : undefined;
-  } catch {
-    return undefined;
-  }
+  if (!token || process.env.NODE_ENV === "production") return undefined;
+  if (viaProxy(req) || !isLoopbackOrigin(browserOrigin(req))) return undefined;
+  return token;
 }
 
 function refuse(status: number, message: string): Response {
@@ -68,6 +126,8 @@ async function relay(req: NextRequest, path: string[]): Promise<Response> {
     if (origin ? origin !== self : site === "cross-site" || site === "cross-origin") {
       return refuse(403, "Cross-origin request rejected");
     }
+    // A browser names where a state-changing call comes from; a call that says neither is not from this app's pages.
+    if (!origin && !site) return refuse(403, "Request without Origin or Sec-Fetch-Site rejected");
   }
   if (path.length < 2 || path[0] !== "api" || path.some((s) => !s || s === "." || s === ".." || /[\\/]/.test(s))) {
     return refuse(404, "Unknown GeckoGraph route");
@@ -86,7 +146,7 @@ async function relay(req: NextRequest, path: string[]): Promise<Response> {
   }
   // A same-origin GET often carries no Origin; GeckoGraph checks the page's origin, so name it.
   if (!headers.get("origin")) headers.set("origin", self);
-  const devToken = localDevToken(headers.get("origin"));
+  const devToken = localDevToken(req);
   if (devToken) headers.set("x-geckograph-dev-token", devToken);
   // The MCP panel's calls carry its widget session as a bearer token. Forward that one kind only: the app's own
   // tokens never reach GeckoGraph.

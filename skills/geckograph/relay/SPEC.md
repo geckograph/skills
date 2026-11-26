@@ -14,8 +14,10 @@ a relay in the stack's own idiom that does exactly this, no more.
    settings, defaulting to `https://app.geckograph.com`. Append the original path and query to the base, and refuse a
    result whose origin is not the base's (400). Never follow redirects.
 3. **Same origin only.** On every request but GET: when `Origin` is present it must equal the request's own
-   `scheme://host`; when it is absent, refuse `Sec-Fetch-Site: cross-site` or `cross-origin`. Refuse with 403. Behind a
-   proxy that terminates TLS, honour the forwarded headers first, or every POST fails this check.
+   `scheme://host`; when it is absent, refuse `Sec-Fetch-Site: cross-site` or `cross-origin`, and refuse a request that
+   has neither `Origin` nor `Sec-Fetch-Site` (a browser always sends one of them; anything else is not the app's own
+   page). Refuse with 403. Behind a proxy that terminates TLS, honour the forwarded headers first, or every POST fails
+   this check.
 4. **Request headers.** Forward only `Content-Type`, `Accept`, `Origin`, `Referer`, `X-Agentify-Api-Key` and
    `X-GeckoGraph-Dev-Token`. Set `Origin` to the relay's own origin when the request has none. Forward `Authorization`
    only when it starts with `Bearer ggws_` (the MCP panel's session). Never forward the `Cookie` header itself.
@@ -26,8 +28,26 @@ a relay in the stack's own idiom that does exactly this, no more.
    `Connection` and `Set-Cookie`. Stream the body as it arrives. For `text/event-stream`, also set
    `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`.
 7. **Errors.** An unreachable upstream is 502. Pass every upstream status through unchanged.
-8. **Dev token, on a development machine only.** Only under the stack's own development switch, and only when the
-   outgoing `Origin` is loopback (`localhost`, `127.0.0.1`, `[::1]`): attach the developer's current dev token as the
+8. **Dev token, on a development machine only.** Only under the stack's own development switch, and only for a request
+   a browser on this machine sent straight to this server:
+   - The page's origin is the one the browser sent: its `Origin` header, or on a GET with no `Origin` (browsers send
+     none on a same-origin GET) its `Referer`'s origin. It must be loopback (`localhost`, `127.0.0.1`, `[::1]`). Never
+     use the `Origin` the relay filled in from its own address (step 4), or anything else worked out from the `Host`
+     header: a tunnel can rewrite `Host` to `localhost` (`ngrok --host-header=localhost:<port>`), and a stranger's
+     request would then look local.
+   - Where the stack exposes the connection's own address, it is loopback, so another machine on the network never
+     gets the token (the ASP.NET templates check it; a Next.js route handler can't see it, so run `next dev -H
+     127.0.0.1` on a shared network).
+   - No proxy or tunnel passed it on: no `Forwarded`, `Via`, `X-Real-IP`, `X-Forwarded-Server`, `True-Client-IP`,
+     `CF-Connecting-IP` or `CF-Ray` header, and no `X-Forwarded-Host`, `X-Original-Host`, `X-Forwarded-For` or
+     `X-Original-For` naming a host or address that is not loopback. (A local front server, such as IIS hosting
+     ASP.NET Core out of process or a local rewrite proxy, names this machine in those; Next.js sets them on every
+     request itself. A tunnel names its public host or its caller.)
+   - What stays open: a tunnel or port forward that adds no forwarding header (`ssh -R`, `ngrok tcp`, a raw TCP
+     forwarder) and a caller who forges a loopback `Origin` look exactly like a local browser. Never expose a dev server
+     that holds a dev token through one.
+
+   Then attach the developer's current dev token as the
    `X-GeckoGraph-Dev-Token` header, and as `devWidgetToken` in the JSON body of `conversations/start`,
    `conversations/{id}/messages` and `conversations/{id}/messages/stream` (a message body that isn't JSON passes
    through unchanged). Read it fresh for each request from a source `geckograph dev` keeps current: a relay written from
